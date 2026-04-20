@@ -1,0 +1,15 @@
+# Exec Plan Migration Note
+
+This note records the one-time migration from legacy plan locations to the current canonical layout.
+
+## Mapping
+
+| Old tracked file | New canonical location | Historical/detail location |
+| --- | --- | --- |
+| `{{ old_plan_path }}` | `{{ new_plan_path }}` | `{{ retained_path }}` |
+
+## Verification Rule
+
+- active or blocked work belongs in `PLANS.md`
+- future tracked work belongs in `docs/codex/TASKS_BACKLOG.md`
+- retained historical plan trees are detail only, not canonical
