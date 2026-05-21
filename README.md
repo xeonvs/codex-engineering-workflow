@@ -2,6 +2,8 @@
 
 Public standalone repository for a Codex skill that audits a repository and scaffolds a conservative engineering workflow doc stack.
 
+Current skill version: `0.3.0`.
+
 The skill is designed for:
 - empty directories
 - minimal git repositories
@@ -75,6 +77,8 @@ The sections below show exact commands for both symlink and copy-based installat
   - `docs/engineering/project_principles.md`
   - `docs/codex/TASKS_BACKLOG.md`
   - `docs/codex/AGENT_EXECUTION_PITFALLS.md`
+- `PLANS.md` patterns for compact checked queue items, baseline checkpoints, active work, and handoff state
+- Planning decomposition, completed-work cleanup, and backlog promotion rules
 - Optional migration and adoption notes for mature repositories
 - Language-preserving scaffolding
 - Audit focused on workflow state and existing repo-owned docs, not stack classification
@@ -127,6 +131,14 @@ Use $engineering-workflow in read-only mode to verify whether this repo already 
 Use $engineering-workflow to adapt this mature repo without overwriting its existing domain docs.
 ```
 
+## Forced Skill Refresh Prompt
+
+Use this prompt when an agent appears to be using stale remembered instructions instead of the installed skill:
+
+```text
+Use $engineering-workflow. Before doing anything else, refresh the installed skill from disk: open the installed SKILL.md, confirm metadata.version, then inspect the relevant references and templates. Ignore any remembered older copy of this skill. Report the loaded version and use only the refreshed instructions for this turn. If the installed version is older than 0.3.0, stop and tell me which skill installation path must be updated.
+```
+
 ## Operating Modes
 
 - `conservative_merge`
@@ -149,6 +161,17 @@ Only real ambiguity should trigger questions:
 - whether existing doc language should remain canonical
 - whether legacy plan trees should stay as retained history
 - whether legacy instruction files such as `CLAUDE.md` should remain as compatibility shims
+
+Before asking, the agent should do at least one targeted read-only investigation pass unless the local environment or repository is unavailable. When the host environment provides a structured user-question tool, the agent should use it; in Codex Plan Mode that tool is `request_user_input`.
+
+## Planning And Backlog Lifecycle
+
+- `PLANS.md` is the active execution context for every repo-changing task.
+- Small bounded tasks use compact checked queue items; multi-step or resumable work uses a full active plan.
+- Work-queue items should be ordered, independently checkable, scoped to one outcome, and clear about validation or documentation follow-up.
+- `docs/codex/TASKS_BACKLOG.md` stores future or inactive work with an activation trigger, next safe action, and exit criteria.
+- When backlog work starts, promote or link it into `PLANS.md`; the backlog should not duplicate the active execution plan.
+- Completed plan detail is compacted, archived, or removed once durable decisions and follow-ups are captured elsewhere.
 
 ## Trust Model
 
@@ -216,26 +239,26 @@ All examples below assume you run them from this repository root.
 Run the bundled audit against a target repo:
 
 ```bash
-python skill/engineering-workflow/scripts/repo_audit.py /path/to/repo
-python skill/engineering-workflow/scripts/plan_bootstrap.py /path/to/repo
+python3 skill/engineering-workflow/scripts/repo_audit.py /path/to/repo
+python3 skill/engineering-workflow/scripts/plan_bootstrap.py /path/to/repo
 ```
 
 Validate a target repo in read-only mode:
 
 ```bash
-python skill/engineering-workflow/scripts/validate_target_repo.py /path/to/repo --mode read-only
+python3 skill/engineering-workflow/scripts/validate_target_repo.py /path/to/repo --mode read-only
 ```
 
 Classify risky commands before using them in a live repo flow:
 
 ```bash
-python skill/engineering-workflow/scripts/validate_target_repo.py /path/to/repo --mode read-only --check-command "python -m compileall ."
+python3 skill/engineering-workflow/scripts/validate_target_repo.py /path/to/repo --mode read-only --check-command "python -m compileall ."
 ```
 
 Scan output text or files for leaks:
 
 ```bash
-python skill/engineering-workflow/scripts/sanitize_output.py --path README.md --deny-term internal-project-name --deny-term private-codename
+python3 skill/engineering-workflow/scripts/sanitize_output.py --path README.md --deny-term internal-project-name --deny-term private-codename
 ```
 
 ## Validating This Public Repo
@@ -243,16 +266,26 @@ python skill/engineering-workflow/scripts/sanitize_output.py --path README.md --
 Validate the skill repo itself:
 
 ```bash
-python skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-python -m unittest discover -s tests -v
+python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
+python3 -m unittest discover -s tests -v
 ```
+
+## Versioning And Updates
+
+The skill version lives in `skill/engineering-workflow/SKILL.md` metadata and uses SemVer.
+
+- Patch version: wording, templates, validation guardrails, or docs that do not change the workflow contract.
+- Minor version: new workflow behavior, new canonical fields, or changed planning/backlog conventions.
+- Major version: incompatible canonical layout or migration behavior.
+
+When updating a symlinked installation, pull the repository and start a new Codex session. For copy-based installations, replace `"$CODEX_HOME/skills/engineering-workflow"` with `skill/engineering-workflow` from this repository, then run the validation commands above.
 
 ## Design Intent
 
 This repository encodes the reusable workflow pattern taken from real repo migrations:
 - short `AGENTS.md` as a map, not a manual
-- `PLANS.md` as the active execution registry
-- separate backlog and pitfalls files
+- `PLANS.md` as the durable execution registry for repo-changing work
+- separate backlog and pitfalls files with cleanup rules to keep active context small
 - durable principles kept separate from task-local execution notes
 - mature-repo migration handled conservatively instead of through broad doc replacement
 

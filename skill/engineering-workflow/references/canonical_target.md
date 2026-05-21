@@ -9,15 +9,20 @@ The skill aims for a layered workflow structure with one clear owner per concern
   - source-of-truth index
   - high-signal invariants and default validation commands
 - `PLANS.md`
-  - only active or blocked execution work
+  - active, blocked, or recently completed execution work
+  - compact checked queue items for small repo-changing tasks
+  - full active plans with baseline and work-queue checkboxes for multi-step or resumable tasks
+  - stale completed detail compacted or archived out of active context
 - `docs/engineering/project_principles.md`
   - durable cross-cutting engineering rules
   - doc ownership boundaries
   - context-hygiene defaults
 - `docs/codex/TASKS_BACKLOG.md`
   - tracked future work that is not active
+  - activation triggers and next safe actions
+  - no detailed execution checklist until promotion into `PLANS.md`
 - `docs/codex/AGENT_EXECUTION_PITFALLS.md`
-  - recurring execution mistakes
+  - generalized recurring execution mistake patterns
 
 ## Optional Files
 

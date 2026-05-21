@@ -49,6 +49,61 @@ class SkillRepoValidationTests(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertTrue(any("absolute_home_path" in item for item in result["errors"]))
 
+    def test_missing_skill_version_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            skill_md = repo_root / "skill" / "engineering-workflow" / "SKILL.md"
+            skill_md.write_text(
+                skill_md.read_text(encoding="utf-8").replace(
+                    "metadata:\n  version: 0.3.0\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("metadata.version" in item for item in result["errors"]))
+
+    def test_readme_version_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            readme = repo_root / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace("Current skill version: `0.3.0`.", "Current skill version: `0.2.0`."),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("current skill version" in item for item in result["errors"]))
+
+    def test_missing_planning_reference_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            (repo_root / "skill" / "engineering-workflow" / "references" / "planning_and_backlog.md").unlink()
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("planning_and_backlog.md" in item for item in result["errors"]))
+
+    def test_missing_forced_refresh_prompt_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            readme = repo_root / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace("## Forced Skill Refresh Prompt", "## Removed Refresh Prompt"),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Forced Skill Refresh Prompt" in item for item in result["errors"]))
+
 
 if __name__ == "__main__":
     unittest.main()

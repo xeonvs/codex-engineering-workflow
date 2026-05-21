@@ -1,8 +1,12 @@
-# PLANS.md
+# Execution Plans
 
-Use this file for active or blocked execution work that is more than a small isolated edit.
+Use this file for active, blocked, or recently completed execution work.
 
-## ExecPlan: <short task title>
+For any task that changes repository state, update this file before implementation and again before handoff.
+Use compact queue items for small bounded tasks. Use a full active plan for multi-step or resumable work.
+Compact or archive completed plan detail when it no longer helps active or imminent work.
+
+## Active Plan: <short task title>
 
 Status: planned | in_progress | blocked | done
 Owner: <agent or engineer name>
@@ -17,15 +21,31 @@ One paragraph describing the end state.
 ### Inputs
 - Docs, files, or retained artifacts the task depends on.
 
-### Implementation Steps
-1. Concrete step.
-2. Concrete step.
+### Completed Baseline State
+- [x] Repo/workflow fact already verified.
+- [x] Prior completed checkpoint future agents should not redo.
+
+### Current Work Queue
+1. [ ] Concrete next step.
+2. [ ] Validation and documentation update.
+
+Queue items should be ordered, independently checkable, scoped to one outcome, and clear about validation or documentation follow-up.
+For a small bounded task, keep this section to one or two checked items and omit baseline detail unless it prevents repeated work.
+
+### Locked Decisions
+- Decision with reason and date.
 
 ### Verification
 - Tests, checks, and manual validation required.
 
-### Decisions
-- Decision log with reasons.
+### Latest Validation Results
+- Command or check: result.
 
 ### Handoff Notes
 - Remaining risks, blockers, or safe next actions.
+
+## Recently Completed
+
+- [x] YYYY-MM-DD: Short completed repo-changing task and validation result.
+
+Keep at most 10 recent entries by default. Archive a full completed plan under `docs/archive/plans/YYYY-MM-DD-<slug>.md` only when it preserves future-useful rationale, migration decisions, validation matrices, or an explicit retention requirement.

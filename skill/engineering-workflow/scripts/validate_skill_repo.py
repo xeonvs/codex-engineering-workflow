@@ -17,6 +17,7 @@ REQUIRED_PATHS = [
     "skill/engineering-workflow/scripts/validate_target_repo.py",
     "skill/engineering-workflow/scripts/sanitize_output.py",
     "skill/engineering-workflow/references/canonical_target.md",
+    "skill/engineering-workflow/references/planning_and_backlog.md",
     "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl",
 ]
 
@@ -38,6 +39,30 @@ FORBIDDEN_TEXT_PATTERNS = {
         re.IGNORECASE,
     ),
 }
+
+SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def _extract_frontmatter(text: str) -> dict[str, str]:
+    match = re.match(r"^---\n(?P<body>.*?)\n---", text, re.DOTALL)
+    if not match:
+        return {}
+
+    values: dict[str, str] = {}
+    current_section = None
+    for raw_line in match.group("body").splitlines():
+        if not raw_line.strip():
+            continue
+        if not raw_line.startswith(" ") and ":" in raw_line:
+            key, value = raw_line.split(":", 1)
+            current_section = key.strip()
+            if value.strip():
+                values[current_section] = value.strip().strip("\"'")
+            continue
+        if current_section == "metadata" and raw_line.startswith("  ") and ":" in raw_line:
+            key, value = raw_line.strip().split(":", 1)
+            values[f"metadata.{key.strip()}"] = value.strip().strip("\"'")
+    return values
 
 
 def _iter_scan_files(repo_root: Path):
@@ -100,6 +125,7 @@ def _scan_public_text(repo_root: Path) -> list[str]:
 def validate_skill_repo(repo_root: Path) -> dict:
     errors = []
     warnings = []
+    skill_version = None
 
     for rel_path in REQUIRED_PATHS:
         if not (repo_root / rel_path).exists():
@@ -108,8 +134,14 @@ def validate_skill_repo(repo_root: Path) -> dict:
     skill_md = repo_root / "skill/engineering-workflow/SKILL.md"
     if skill_md.exists():
         text = skill_md.read_text(encoding="utf-8")
-        if not re.search(r"^---\nname: engineering-workflow\ndescription: .+\n---", text, re.DOTALL):
+        frontmatter = _extract_frontmatter(text)
+        if frontmatter.get("name") != "engineering-workflow" or not frontmatter.get("description"):
             errors.append("SKILL.md frontmatter is missing or malformed")
+        version = frontmatter.get("metadata.version")
+        if not version or not SEMVER_PATTERN.match(version):
+            errors.append("SKILL.md metadata.version is missing or not SemVer")
+        else:
+            skill_version = version
         if "[TODO" in text or "TODO:" in text:
             errors.append("SKILL.md still contains TODO markers")
 
@@ -122,7 +154,9 @@ def validate_skill_repo(repo_root: Path) -> dict:
             "## Quick Start",
             "## Installing The Skill",
             "## Using The Skill In Codex",
+            "## Forced Skill Refresh Prompt",
             "## Operating Modes",
+            "## Planning And Backlog Lifecycle",
             "## Example Workflows",
         ]
         for section in required_sections:
@@ -130,6 +164,10 @@ def validate_skill_repo(repo_root: Path) -> dict:
                 errors.append(f"README.md is missing required section: {section}")
         if 'CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"' not in readme_text:
             errors.append("README.md should explain the default CODEX_HOME location")
+        if "## Versioning And Updates" not in readme_text:
+            errors.append("README.md is missing versioning and update instructions")
+        if skill_version and f"Current skill version: `{skill_version}`." not in readme_text:
+            errors.append("README.md current skill version does not match SKILL.md metadata.version")
 
     openai_yaml = repo_root / "skill/engineering-workflow/agents/openai.yaml"
     if openai_yaml.exists():

@@ -2,6 +2,20 @@
 
 Ask only when the answer materially changes the scaffold or creates merge risk.
 
+## Before Asking
+
+- Run at least one targeted non-mutating exploration pass first.
+- Use repository facts to eliminate questions about file locations, existing owners, language, tooling, and current implementation shape.
+- Ask only if the answer cannot be found safely or if the remaining ambiguity is product intent.
+
+## How To Ask
+
+- Use the host environment's structured user-question tool when available; in Codex Plan Mode this is `request_user_input`.
+- Offer only meaningful choices. Do not add filler options that are obviously wrong or irrelevant.
+- If choices cannot cover the whole answer space, still give the best known choices and leave room for free-text clarification.
+- Each question must either change the plan, lock an important assumption, choose a real tradeoff, or unblock missing context that cannot be discovered by inspection.
+- Do not replace planning with shallow permission questions such as whether a file may be created.
+
 ## Ask
 
 - validation mode when stronger checks could write to the live repo

@@ -13,7 +13,7 @@ Use this file as a short repository map and source-of-truth index.
 - `AGENTS.md`
   - short repo map and durable pointers
 - `PLANS.md`
-  - active or blocked execution registry
+  - active, blocked, or recently completed execution registry
 - `docs/engineering/project_principles.md`
   - durable cross-cutting rules and doc ownership boundaries
 - `docs/codex/TASKS_BACKLOG.md`
@@ -23,6 +23,10 @@ Use this file as a short repository map and source-of-truth index.
 
 ## Working Defaults
 
-- For any multi-step task, open `PLANS.md` first.
+- For any task that changes repository state, open `PLANS.md` first.
+- Use a compact checked queue item for small bounded tasks.
+- Use a full active plan with baseline and work-queue checkboxes for multi-step or resumable work.
+- Promote active work from `docs/codex/TASKS_BACKLOG.md` into `PLANS.md` before implementation.
+- Compact or archive completed plan detail so stale context does not stay in active files.
 - Keep `AGENTS.md` short.
 - Prefer quiet, targeted validation over broad noisy runs.
