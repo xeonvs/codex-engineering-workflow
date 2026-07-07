@@ -5,6 +5,7 @@ Use this file for active, blocked, or recently completed execution work.
 For any task that changes repository state, update this file before implementation and again before handoff.
 Use a full active plan while work is active, blocked, pending validation, or handoff-relevant.
 Compact or archive completed plan detail only after validation and handoff are recorded.
+Before staging or committing, update each active plan to the state that will be true after the commit.
 
 ## Active Plan: <short task title>
 
@@ -46,6 +47,10 @@ Queue items should be ordered, independently checkable, scoped to one outcome, a
 
 ### Resume Point
 - Exact next safe action if context is compacted or another agent resumes.
+
+### Pre-Commit Closure
+- If this task is complete, set `Status: done` or move the durable summary to `Recently Completed` before committing.
+- If this task remains active after commit, keep `Status: in_progress` or `blocked` and record the resume point above.
 
 ### Handoff Notes
 - Remaining risks, blockers, or safe next actions.

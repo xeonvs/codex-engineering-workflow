@@ -40,7 +40,10 @@ FORBIDDEN_TEXT_PATTERNS = {
     ),
 }
 
-STALE_SKILL_VERSION = ".".join(["0", "3", "0"])
+STALE_SKILL_VERSIONS = {
+    ".".join(["0", "3", "0"]),
+    ".".join(["0", "3", "1"]),
+}
 
 FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS = {
     "legacy_compact_queue_contract": re.compile(r"compact checked\s+queue", re.IGNORECASE),
@@ -52,11 +55,15 @@ REQUIRED_CONTRACT_SNIPPETS = {
     "skill/engineering-workflow/SKILL.md": [
         "use a full active plan while work is active, blocked, pending validation, or needs handoff",
         "Record the user's full requested outcome, sources, constraints, decisions, validation, and resume point",
+        "Before staging or committing, update `PLANS.md` to match the post-commit state",
         "Conservative means preserving existing owners and avoiding unrelated expansion, not narrowing the user's requested outcome",
     ],
     "skill/engineering-workflow/references/planning_and_backlog.md": [
         "Use a full active plan for every task that changes repository state",
         "Do not compress active work into a single queue item or final-summary line",
+        "## Pre-Commit Closure Gate",
+        "Do not commit completed work while its active plan still says `planned` or `in_progress`",
+        "Archive a backlog item under `docs/archive/backlog/YYYY-MM-DD-<slug>.md` only",
         "Conservative planning means preserving existing owners and avoiding unrelated expansion",
     ],
     "skill/engineering-workflow/references/merge_policy.md": [
@@ -65,9 +72,15 @@ REQUIRED_CONTRACT_SNIPPETS = {
     "skill/engineering-workflow/assets/templates/PLANS.md.tmpl": [
         "### Requested Scope",
         "### Resume Point",
+        "### Pre-Commit Closure",
         "Compact or archive completed plan detail only after validation and handoff are recorded",
     ],
+    "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl": [
+        "remove the backlog item by default",
+        "Archive only when future-useful rationale",
+    ],
     "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl": [
+        "Before staging or committing, update active plans and promoted backlog items to their post-commit state",
         "Do not narrow the user's requested scope because the task is large or inconvenient",
     ],
 }
@@ -148,8 +161,9 @@ def _scan_public_text(repo_root: Path) -> list[str]:
         except UnicodeDecodeError:
             continue
         rel_path = path.relative_to(repo_root)
-        if STALE_SKILL_VERSION in text:
-            issues.append(f"Stale skill version reference found in {rel_path}")
+        for stale_version in STALE_SKILL_VERSIONS:
+            if stale_version in text:
+                issues.append(f"Stale skill version reference found in {rel_path}")
         for name, pattern in FORBIDDEN_TEXT_PATTERNS.items():
             if pattern.search(text):
                 issues.append(f"Forbidden {name} found in {rel_path}")

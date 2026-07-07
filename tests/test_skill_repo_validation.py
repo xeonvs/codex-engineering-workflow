@@ -10,8 +10,8 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.3.1"
-STALE_VERSION = ".".join(["0", "3", "0"])
+CURRENT_VERSION = "0.4.0"
+STALE_VERSIONS = [".".join(["0", "3", "0"]), ".".join(["0", "3", "1"])]
 LEGACY_COMPACT_QUEUE = "compact checked " + "queue item"
 
 
@@ -89,7 +89,7 @@ class SkillRepoValidationTests(unittest.TestCase):
             self._copy_repo_subset(repo_root)
             readme = repo_root / "README.md"
             readme.write_text(
-                readme.read_text(encoding="utf-8") + f"\nPrior version: {STALE_VERSION}\n",
+                readme.read_text(encoding="utf-8") + "\nPrior versions: " + ", ".join(STALE_VERSIONS) + "\n",
                 encoding="utf-8",
             )
 
@@ -118,6 +118,37 @@ class SkillRepoValidationTests(unittest.TestCase):
             template = repo_root / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
             template.write_text(
                 template.read_text(encoding="utf-8").replace("\n### Resume Point\n", "\n### Continuation Notes\n"),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Required planning contract text" in item for item in result["errors"]))
+
+    def test_missing_pre_commit_closure_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            template = repo_root / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
+            template.write_text(
+                template.read_text(encoding="utf-8").replace("\n### Pre-Commit Closure\n", "\n### Commit Notes\n"),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Required planning contract text" in item for item in result["errors"]))
+
+    def test_missing_backlog_archive_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            template = repo_root / "skill" / "engineering-workflow" / "assets" / "templates" / "TASKS_BACKLOG.md.tmpl"
+            template.write_text(
+                template.read_text(encoding="utf-8").replace(
+                    "Archive only when future-useful rationale",
+                    "Archive whenever convenient",
+                ),
                 encoding="utf-8",
             )
 

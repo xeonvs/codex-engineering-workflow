@@ -12,6 +12,7 @@ The skill aims for a layered workflow structure with one clear owner per concern
   - active, blocked, or recently completed execution work
   - full active plans for active repo-changing tasks
   - requested scope, sources, constraints, decisions, validation, and resume point preserved through context compaction
+  - active plan status updated to post-commit truth before staging or committing
   - completed detail compacted or archived only after validation and handoff are recorded
 - `docs/engineering/project_principles.md`
   - durable cross-cutting engineering rules
@@ -22,6 +23,7 @@ The skill aims for a layered workflow structure with one clear owner per concern
   - tracked future work that is not active
   - activation triggers and next safe actions
   - no detailed execution checklist until promotion into `PLANS.md`
+  - promoted items closed, removed, or archived when the matching active plan closes
 - `docs/codex/AGENT_EXECUTION_PITFALLS.md`
   - generalized recurring execution mistake patterns
 
