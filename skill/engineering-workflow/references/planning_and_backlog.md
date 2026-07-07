@@ -5,9 +5,27 @@ Use this reference when creating or updating `PLANS.md` and `docs/codex/TASKS_BA
 ## Planning Depth
 
 - Use `PLANS.md` for every task that changes repository state.
-- For a small bounded task, add one compact checked queue item plus the final validation result.
-- For multi-step or resumable work, use a full active plan with baseline state, current work queue, locked decisions, validation, and handoff notes.
+- Use a full active plan for every task that changes repository state while it is active, blocked, pending validation, or handoff-relevant.
+- Preserve the user's requested scope, inputs and sources, constraints, locked decisions, current work queue, validation plan, latest validation result, and resume point.
+- Do not compress active work into a single queue item or final-summary line.
+- If a task must be narrowed, ask the user or record the explicit assumption and reason before implementation.
 - Do not leave durable decisions only in chat.
+
+## Active Plan Contract
+
+An active plan must include enough state for a future agent to continue without reconstructing the work from chat:
+
+- goal and requested scope
+- constraints and explicit non-goals
+- inputs, source files, references, issues, or prior artifacts
+- completed baseline facts that should not be rechecked
+- ordered current work queue with checked progress
+- locked decisions with reasons
+- verification commands or manual checks
+- latest validation results
+- handoff notes or the exact resume point
+
+Conservative planning means preserving existing owners and avoiding unrelated expansion. It does not mean reducing the user's requested outcome because the work is large or inconvenient.
 
 ## Decomposition Rules
 
@@ -33,7 +51,7 @@ Avoid vague items such as "finish implementation" or "clean up docs". Replace th
 
 - Keep a full active plan in `PLANS.md` while there is active work, blocked work, pending validation, unresolved handoff, or imminent dependent work.
 - When work is complete, move durable decisions into their canonical owner such as `AGENTS.md`, `docs/engineering/project_principles.md`, or project-specific docs.
-- Collapse the completed active plan into one `Recently Completed` entry once validation results and follow-up links are recorded.
+- Collapse the completed active plan into one `Recently Completed` entry only after validation results, follow-up links, and handoff state are recorded.
 - Keep at most 10 `Recently Completed` entries by default.
 - Archive a full completed plan under `docs/archive/plans/YYYY-MM-DD-<slug>.md` only when it preserves future-useful rationale, migration decisions, validation matrices, or an explicit retention requirement.
 - Delete stale completed detail instead of archiving it when the information is already captured in canonical docs, tests, backlog items, or issue trackers.

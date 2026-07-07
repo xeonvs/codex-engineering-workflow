@@ -7,6 +7,7 @@ Default mode is `conservative_merge`.
 - Audit before editing.
 - Preserve existing canonical docs when they already own the topic.
 - Prefer additive shims, migration notes, or narrowly-scoped rewrites over broad replacement.
+- Preserve the user's requested outcome; do not use `conservative_merge` as permission to reduce scope because the work is large or inconvenient.
 - Do not convert archival or domain docs into active workflow docs.
 - Do not delete retained historical trees without explicit user approval.
 - Do not rewrite repo-specific policy or product rules into generic workflow prose.

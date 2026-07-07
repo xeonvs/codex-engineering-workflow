@@ -3,8 +3,8 @@
 Use this file for active, blocked, or recently completed execution work.
 
 For any task that changes repository state, update this file before implementation and again before handoff.
-Use compact queue items for small bounded tasks. Use a full active plan for multi-step or resumable work.
-Compact or archive completed plan detail when it no longer helps active or imminent work.
+Use a full active plan while work is active, blocked, pending validation, or handoff-relevant.
+Compact or archive completed plan detail only after validation and handoff are recorded.
 
 ## Active Plan: <short task title>
 
@@ -15,11 +15,15 @@ Last Updated: YYYY-MM-DD
 ### Goal
 One paragraph describing the end state.
 
+### Requested Scope
+- User-requested outcomes that must remain in scope.
+- Explicit non-goals or scope reductions, with the reason and source.
+
 ### Constraints
 - Hard rules that cannot be violated.
 
 ### Inputs
-- Docs, files, or retained artifacts the task depends on.
+- Docs, files, source references, issues, or retained artifacts the task depends on.
 
 ### Completed Baseline State
 - [x] Repo/workflow fact already verified.
@@ -30,7 +34,6 @@ One paragraph describing the end state.
 2. [ ] Validation and documentation update.
 
 Queue items should be ordered, independently checkable, scoped to one outcome, and clear about validation or documentation follow-up.
-For a small bounded task, keep this section to one or two checked items and omit baseline detail unless it prevents repeated work.
 
 ### Locked Decisions
 - Decision with reason and date.
@@ -40,6 +43,9 @@ For a small bounded task, keep this section to one or two checked items and omit
 
 ### Latest Validation Results
 - Command or check: result.
+
+### Resume Point
+- Exact next safe action if context is compacted or another agent resumes.
 
 ### Handoff Notes
 - Remaining risks, blockers, or safe next actions.

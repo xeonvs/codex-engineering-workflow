@@ -40,6 +40,38 @@ FORBIDDEN_TEXT_PATTERNS = {
     ),
 }
 
+STALE_SKILL_VERSION = ".".join(["0", "3", "0"])
+
+FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS = {
+    "legacy_compact_queue_contract": re.compile(r"compact checked\s+queue", re.IGNORECASE),
+    "legacy_small_task_compaction": re.compile(r"small bounded\s+tasks?", re.IGNORECASE),
+    "legacy_overengineering_prompt": re.compile(r"without over" + r"engineering", re.IGNORECASE),
+}
+
+REQUIRED_CONTRACT_SNIPPETS = {
+    "skill/engineering-workflow/SKILL.md": [
+        "use a full active plan while work is active, blocked, pending validation, or needs handoff",
+        "Record the user's full requested outcome, sources, constraints, decisions, validation, and resume point",
+        "Conservative means preserving existing owners and avoiding unrelated expansion, not narrowing the user's requested outcome",
+    ],
+    "skill/engineering-workflow/references/planning_and_backlog.md": [
+        "Use a full active plan for every task that changes repository state",
+        "Do not compress active work into a single queue item or final-summary line",
+        "Conservative planning means preserving existing owners and avoiding unrelated expansion",
+    ],
+    "skill/engineering-workflow/references/merge_policy.md": [
+        "Preserve the user's requested outcome; do not use `conservative_merge` as permission to reduce scope",
+    ],
+    "skill/engineering-workflow/assets/templates/PLANS.md.tmpl": [
+        "### Requested Scope",
+        "### Resume Point",
+        "Compact or archive completed plan detail only after validation and handoff are recorded",
+    ],
+    "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl": [
+        "Do not narrow the user's requested scope because the task is large or inconvenient",
+    ],
+}
+
 SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -116,9 +148,27 @@ def _scan_public_text(repo_root: Path) -> list[str]:
         except UnicodeDecodeError:
             continue
         rel_path = path.relative_to(repo_root)
+        if STALE_SKILL_VERSION in text:
+            issues.append(f"Stale skill version reference found in {rel_path}")
         for name, pattern in FORBIDDEN_TEXT_PATTERNS.items():
             if pattern.search(text):
                 issues.append(f"Forbidden {name} found in {rel_path}")
+        for name, pattern in FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS.items():
+            if pattern.search(text):
+                issues.append(f"Forbidden {name} found in {rel_path}")
+    return issues
+
+
+def _check_required_contract_text(repo_root: Path) -> list[str]:
+    issues = []
+    for rel_path, snippets in REQUIRED_CONTRACT_SNIPPETS.items():
+        path = repo_root / rel_path
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for snippet in snippets:
+            if snippet not in text:
+                issues.append(f"Required planning contract text missing from {rel_path}: {snippet}")
     return issues
 
 
@@ -179,6 +229,7 @@ def validate_skill_repo(repo_root: Path) -> dict:
 
     errors.extend(_check_for_forbidden_paths(repo_root))
     errors.extend(_scan_public_text(repo_root))
+    errors.extend(_check_required_contract_text(repo_root))
 
     return {"success": not errors, "errors": errors, "warnings": warnings}
 

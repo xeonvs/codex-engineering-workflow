@@ -10,13 +10,14 @@ The skill aims for a layered workflow structure with one clear owner per concern
   - high-signal invariants and default validation commands
 - `PLANS.md`
   - active, blocked, or recently completed execution work
-  - compact checked queue items for small repo-changing tasks
-  - full active plans with baseline and work-queue checkboxes for multi-step or resumable tasks
-  - stale completed detail compacted or archived out of active context
+  - full active plans for active repo-changing tasks
+  - requested scope, sources, constraints, decisions, validation, and resume point preserved through context compaction
+  - completed detail compacted or archived only after validation and handoff are recorded
 - `docs/engineering/project_principles.md`
   - durable cross-cutting engineering rules
   - doc ownership boundaries
   - context-hygiene defaults
+  - conservative execution defaults that preserve user scope
 - `docs/codex/TASKS_BACKLOG.md`
   - tracked future work that is not active
   - activation triggers and next safe actions

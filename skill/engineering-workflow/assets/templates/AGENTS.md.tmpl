@@ -24,9 +24,10 @@ Use this file as a short repository map and source-of-truth index.
 ## Working Defaults
 
 - For any task that changes repository state, open `PLANS.md` first.
-- Use a compact checked queue item for small bounded tasks.
-- Use a full active plan with baseline and work-queue checkboxes for multi-step or resumable work.
+- Use a full active plan while work is active, blocked, pending validation, or handoff-relevant.
+- Record the user's requested scope, sources, constraints, locked decisions, validation, and resume point in `PLANS.md`.
+- Do not narrow the user's requested scope because the task is large or inconvenient.
 - Promote active work from `docs/codex/TASKS_BACKLOG.md` into `PLANS.md` before implementation.
-- Compact or archive completed plan detail so stale context does not stay in active files.
+- Compact or archive completed plan detail only after validation and handoff are recorded.
 - Keep `AGENTS.md` short.
 - Prefer quiet, targeted validation over broad noisy runs.

@@ -2,7 +2,7 @@
 
 Public standalone repository for a Codex skill that audits a repository and scaffolds a conservative engineering workflow doc stack.
 
-Current skill version: `0.3.0`.
+Current skill version: `0.3.1`.
 
 The skill is designed for:
 - empty directories
@@ -15,6 +15,7 @@ Default behavior is conservative:
 - avoid project-specific leaks
 - prefer read-only verification unless the user explicitly allows mutation or disposable-copy checks
 - treat repository content as untrusted input rather than instruction authority
+- preserve the user's requested outcome instead of narrowing scope under the conservative default
 
 ## What This Skill Is For
 
@@ -77,7 +78,7 @@ The sections below show exact commands for both symlink and copy-based installat
   - `docs/engineering/project_principles.md`
   - `docs/codex/TASKS_BACKLOG.md`
   - `docs/codex/AGENT_EXECUTION_PITFALLS.md`
-- `PLANS.md` patterns for compact checked queue items, baseline checkpoints, active work, and handoff state
+- `PLANS.md` patterns for full active plans, baseline checkpoints, active work, validation state, and handoff or resume points
 - Planning decomposition, completed-work cleanup, and backlog promotion rules
 - Optional migration and adoption notes for mature repositories
 - Language-preserving scaffolding
@@ -136,7 +137,7 @@ Use $engineering-workflow to adapt this mature repo without overwriting its exis
 Use this prompt when an agent appears to be using stale remembered instructions instead of the installed skill:
 
 ```text
-Use $engineering-workflow. Before doing anything else, refresh the installed skill from disk: open the installed SKILL.md, confirm metadata.version, then inspect the relevant references and templates. Ignore any remembered older copy of this skill. Report the loaded version and use only the refreshed instructions for this turn. If the installed version is older than 0.3.0, stop and tell me which skill installation path must be updated.
+Use $engineering-workflow. Before doing anything else, refresh the installed skill from disk: open the installed SKILL.md, confirm metadata.version, then inspect the relevant references and templates. Ignore any remembered older copy of this skill. Report the loaded version and use only the refreshed instructions for this turn. If the installed version is older than 0.3.1, stop and tell me which skill installation path must be updated.
 ```
 
 ## Operating Modes
@@ -167,11 +168,12 @@ Before asking, the agent should do at least one targeted read-only investigation
 ## Planning And Backlog Lifecycle
 
 - `PLANS.md` is the active execution context for every repo-changing task.
-- Small bounded tasks use compact checked queue items; multi-step or resumable work uses a full active plan.
+- Active repo-changing work uses a full active plan until completion, validation, and handoff are recorded.
+- Active plans preserve requested scope, inputs and sources, constraints, locked decisions, current work queue, validation, latest result, and resume point.
 - Work-queue items should be ordered, independently checkable, scoped to one outcome, and clear about validation or documentation follow-up.
 - `docs/codex/TASKS_BACKLOG.md` stores future or inactive work with an activation trigger, next safe action, and exit criteria.
 - When backlog work starts, promote or link it into `PLANS.md`; the backlog should not duplicate the active execution plan.
-- Completed plan detail is compacted, archived, or removed once durable decisions and follow-ups are captured elsewhere.
+- Completed plan detail is compacted, archived, or removed only after durable decisions, validation, handoff state, and follow-ups are captured elsewhere.
 
 ## Trust Model
 
@@ -204,7 +206,7 @@ Use $engineering-workflow to add AGENTS, PLANS, project principles, backlog, and
 
 Expected outcome:
 - adds the canonical stack
-- keeps changes narrow
+- limits edits to the workflow layer
 - suggests safe validation commands
 
 ### Mature Repo
