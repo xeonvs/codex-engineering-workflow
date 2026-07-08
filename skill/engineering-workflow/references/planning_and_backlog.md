@@ -8,6 +8,7 @@ Use this reference when creating or updating `PLANS.md` and `docs/codex/TASKS_BA
 - Use a full active plan for every task that changes repository state while it is active, blocked, pending validation, or handoff-relevant.
 - Preserve the user's requested scope, inputs and sources, constraints, locked decisions, current work queue, validation plan, latest validation result, and resume point.
 - Do not compress active work into a single queue item or final-summary line.
+- After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, `docs/codex/TASKS_BACKLOG.md`, and related workflow docs before code changes.
 - If a task must be narrowed, ask the user or record the explicit assumption and reason before implementation.
 - Before staging or committing, update `PLANS.md` to match the post-commit truth.
 - Do not leave durable decisions only in chat.
@@ -27,6 +28,17 @@ An active plan must include enough state for a future agent to continue without 
 - handoff notes or the exact resume point
 
 Conservative planning means preserving existing owners and avoiding unrelated expansion. It does not mean reducing the user's requested outcome because the work is large or inconvenient.
+
+## Resume And Milestone Reconciliation
+
+After context compaction, interruption, resume, or milestone closure, reconcile workflow state before code changes:
+
+- `PLANS.md` active plan, `docs/codex/TASKS_BACKLOG.md`, and related workflow docs must agree on the current milestone.
+- The next safe action must match the first unchecked active-plan queue item or the linked backlog item.
+- Latest validation results must match the status claimed by the plan or completed summary.
+- `done`, `in_progress`, `blocked`, `promoted`, and backlog cleanup statuses must not conflict.
+- Do not leave stale "next work", resume, or milestone status text in completed sections when it can be mistaken for current state.
+- If a completed section must retain follow-up context, move it to a backlog item or explicit follow-up link instead of leaving it as active next work.
 
 ## Pre-Commit Closure Gate
 
@@ -64,6 +76,7 @@ Avoid vague items such as "finish implementation" or "clean up docs". Replace th
 - Keep a full active plan in `PLANS.md` while there is active work, blocked work, pending validation, unresolved handoff, or imminent dependent work.
 - When work is complete, move durable decisions into their canonical owner such as `AGENTS.md`, `docs/engineering/project_principles.md`, or project-specific docs.
 - Collapse the completed active plan into one `Recently Completed` entry only after validation results, follow-up links, and handoff state are recorded.
+- A completed summary must not include stale current-milestone, next-work, or resume text unless it is an explicit follow-up link.
 - Keep at most 10 `Recently Completed` entries by default.
 - Archive a full completed plan under `docs/archive/plans/YYYY-MM-DD-<slug>.md` only when it preserves future-useful rationale, migration decisions, validation matrices, or an explicit retention requirement.
 - When archiving a full plan, replace the active plan with a `Recently Completed` entry that links or names the archive path and validation result.

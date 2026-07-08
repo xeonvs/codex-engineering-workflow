@@ -43,6 +43,7 @@ FORBIDDEN_TEXT_PATTERNS = {
 STALE_SKILL_VERSIONS = {
     ".".join(["0", "3", "0"]),
     ".".join(["0", "3", "1"]),
+    ".".join(["0", "4", "0"]),
 }
 
 FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS = {
@@ -55,12 +56,17 @@ REQUIRED_CONTRACT_SNIPPETS = {
     "skill/engineering-workflow/SKILL.md": [
         "use a full active plan while work is active, blocked, pending validation, or needs handoff",
         "Record the user's full requested outcome, sources, constraints, decisions, validation, and resume point",
+        "After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, `docs/codex/TASKS_BACKLOG.md`, and related workflow docs before code changes",
+        "Do not leave stale \"next work\", resume, or milestone status text in completed sections",
         "Before staging or committing, update `PLANS.md` to match the post-commit state",
         "Conservative means preserving existing owners and avoiding unrelated expansion, not narrowing the user's requested outcome",
     ],
     "skill/engineering-workflow/references/planning_and_backlog.md": [
         "Use a full active plan for every task that changes repository state",
         "Do not compress active work into a single queue item or final-summary line",
+        "## Resume And Milestone Reconciliation",
+        "The next safe action must match the first unchecked active-plan queue item or the linked backlog item",
+        "Do not leave stale \"next work\", resume, or milestone status text in completed sections",
         "## Pre-Commit Closure Gate",
         "Do not commit completed work while its active plan still says `planned` or `in_progress`",
         "Archive a backlog item under `docs/archive/backlog/YYYY-MM-DD-<slug>.md` only",
@@ -72,14 +78,19 @@ REQUIRED_CONTRACT_SNIPPETS = {
     "skill/engineering-workflow/assets/templates/PLANS.md.tmpl": [
         "### Requested Scope",
         "### Resume Point",
+        "### Reconciliation Check",
         "### Pre-Commit Closure",
+        "Completed sections do not contain stale \"next work\", resume, or milestone status text",
         "Compact or archive completed plan detail only after validation and handoff are recorded",
     ],
     "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl": [
+        "After context compaction, interruption, resume, or milestone closure, reconcile backlog status with `PLANS.md` before code changes",
+        "Do not leave stale next safe action or milestone status text in a `done` item",
         "remove the backlog item by default",
         "Archive only when future-useful rationale",
     ],
     "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl": [
+        "After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, backlog, validation state, and statuses before code changes",
         "Before staging or committing, update active plans and promoted backlog items to their post-commit state",
         "Do not narrow the user's requested scope because the task is large or inconvenient",
     ],

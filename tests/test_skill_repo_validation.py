@@ -10,8 +10,12 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.4.0"
-STALE_VERSIONS = [".".join(["0", "3", "0"]), ".".join(["0", "3", "1"])]
+CURRENT_VERSION = "0.4.1"
+STALE_VERSIONS = [
+    ".".join(["0", "3", "0"]),
+    ".".join(["0", "3", "1"]),
+    ".".join(["0", "4", "0"]),
+]
 LEGACY_COMPACT_QUEUE = "compact checked " + "queue item"
 
 
@@ -132,6 +136,37 @@ class SkillRepoValidationTests(unittest.TestCase):
             template = repo_root / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
             template.write_text(
                 template.read_text(encoding="utf-8").replace("\n### Pre-Commit Closure\n", "\n### Commit Notes\n"),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Required planning contract text" in item for item in result["errors"]))
+
+    def test_missing_reconciliation_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            template = repo_root / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
+            template.write_text(
+                template.read_text(encoding="utf-8").replace("\n### Reconciliation Check\n", "\n### State Check\n"),
+                encoding="utf-8",
+            )
+
+            result = validate_skill_repo.validate_skill_repo(repo_root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Required planning contract text" in item for item in result["errors"]))
+
+    def test_missing_stale_completed_section_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            self._copy_repo_subset(repo_root)
+            reference = repo_root / "skill" / "engineering-workflow" / "references" / "planning_and_backlog.md"
+            reference.write_text(
+                reference.read_text(encoding="utf-8").replace(
+                    'Do not leave stale "next work", resume, or milestone status text in completed sections',
+                    "Keep completed summaries short",
+                ),
                 encoding="utf-8",
             )
 

@@ -12,6 +12,8 @@ The skill aims for a layered workflow structure with one clear owner per concern
   - active, blocked, or recently completed execution work
   - full active plans for active repo-changing tasks
   - requested scope, sources, constraints, decisions, validation, and resume point preserved through context compaction
+  - reconciliation after compaction, interruption, resume, or milestone closure
+  - completed summaries without stale next-work or milestone-status text
   - active plan status updated to post-commit truth before staging or committing
   - completed detail compacted or archived only after validation and handoff are recorded
 - `docs/engineering/project_principles.md`
