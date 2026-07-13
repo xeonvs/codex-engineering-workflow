@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
+import shutil
+import stat
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from test_support import load_script_module
 
@@ -45,6 +49,18 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(snapshot(root), before)
             self.assertFalse((root / "PLANS.md").exists())
 
+    def test_invalid_target_version_is_refused_without_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            before = snapshot(root)
+
+            with self.assertRaises(migrator.MigrationConflict) as error:
+                migrator.build_migration_report(root, "0.5.1\n## injected")
+
+            self.assertEqual(error.exception.code, "invalid_target_version")
+            self.assertEqual(snapshot(root), before)
+
     def test_apply_creates_plan_first_and_writes_state_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -56,6 +72,178 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             plan_text = (root / "PLANS.md").read_text(encoding="utf-8")
             self.assertEqual(common.validate_plan_schema(plan_text, declared_external_sources=True), [])
             self.assertIn("Status: done", plan_text)
+
+    def test_atomic_replacement_preserves_existing_file_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            plans = root / "PLANS.md"
+            plans.write_text("# Execution Plans\n", encoding="utf-8")
+            plans.chmod(0o600)
+
+            result = migrator.apply_migration(root, "0.5.1")
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(stat.S_IMODE(plans.stat().st_mode), 0o600)
+
+    def test_rollback_removes_directories_created_by_failed_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.mkdir(exist_ok=True)
+            (root / "README.md").write_text("# Target\n", encoding="utf-8")
+            with mock.patch.object(migrator, "_manifest_text", side_effect=RuntimeError("synthetic failure")):
+                result = migrator.apply_migration(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "rolled_back")
+            self.assertTrue((root / "PLANS.md").is_file())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / "docs").exists())
+
+    def test_prompt_upgrade_runs_report_then_safe_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+
+            result = migrator.execute_prompt_upgrade(root, "0.5.1")
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["mode"], "prompt")
+            self.assertTrue(result["report_reviewed"])
+            self.assertEqual(result["agent_action"], "complete_and_validate")
+            self.assertEqual(result["mutation_log"][0], "PLANS.md")
+            manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
+            self.assertIn('skill_version: "0.5.1"', manifest.read_text(encoding="utf-8"))
+
+    def test_prompt_upgrade_asks_one_question_without_writes_on_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            plans = root / "PLANS.md"
+            original = "# Plans\n\n## Active Plan: Product Release\n\nStatus: in_progress\n"
+            plans.write_text(original, encoding="utf-8")
+
+            result = migrator.execute_prompt_upgrade(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["mode"], "prompt")
+            self.assertEqual(result["agent_action"], "ask_targeted_question")
+            self.assertEqual(len(result["required_user_questions"]), 1)
+            self.assertEqual(result["question_to_ask"], result["required_user_questions"][0])
+            self.assertEqual(result["mutation_log"], [])
+            self.assertEqual(plans.read_text(encoding="utf-8"), original)
+
+    def test_prompt_upgrade_stops_without_writes_on_privacy_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            private_path = "/" + "Users" + "/sample/private/project"
+            readme = root / "README.md"
+            original = readme.read_text(encoding="utf-8") + private_path + "\n"
+            readme.write_text(original, encoding="utf-8")
+
+            result = migrator.execute_prompt_upgrade(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "privacy_review_required")
+            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["mutation_log"], [])
+            self.assertFalse((root / "PLANS.md").exists())
+            self.assertEqual(readme.read_text(encoding="utf-8"), original)
+
+    def test_direct_apply_stops_without_writes_on_privacy_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            readme = root / "README.md"
+            original = readme.read_text(encoding="utf-8") + "/" + "home" + "/sample/private\n"
+            readme.write_text(original, encoding="utf-8")
+            before = snapshot(root)
+
+            result = migrator.apply_migration(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "privacy_review_required")
+            self.assertFalse(result["validation_result"]["privacy"])
+            self.assertEqual(result["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+
+    def test_prompt_rechecks_privacy_immediately_before_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            original_report = migrator.build_migration_report
+            calls = {"count": 0}
+
+            def introduce_after_first_report(*args, **kwargs):
+                report = original_report(*args, **kwargs)
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    (root / "late-note.md").write_text(
+                        "/" + "Users" + "/sample/introduced-after-review\n",
+                        encoding="utf-8",
+                    )
+                return report
+
+            with mock.patch.object(migrator, "build_migration_report", side_effect=introduce_after_first_report):
+                result = migrator.execute_prompt_upgrade(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "privacy_review_required")
+            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["mutation_log"], [])
+            self.assertFalse((root / "PLANS.md").exists())
+
+    def test_parent_directory_swap_to_symlink_cannot_redirect_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            outside = base / "outside"
+            root.mkdir()
+            outside.mkdir()
+            make_target(root)
+            original_write = migrator._SecureRoot.write_text
+            swapped = {"done": False}
+
+            def swap_before_docs_write(secure_root, relative, text):
+                if relative == common.CANONICAL_FILES["principles"] and not swapped["done"]:
+                    swapped["done"] = True
+                    os.replace(root / "docs", root / "docs-original")
+                    (root / "docs").symlink_to(outside, target_is_directory=True)
+                return original_write(secure_root, relative, text)
+
+            with mock.patch.object(migrator._SecureRoot, "write_text", new=swap_before_docs_write):
+                result = migrator.apply_migration(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertIn(result["update_status"], {"rolled_back", "rollback_failed"})
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_root_inode_swap_after_report_is_refused_without_outside_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            moved = base / "repo-original"
+            outside = base / "outside"
+            root.mkdir()
+            outside.mkdir()
+            make_target(root)
+            original_report = migrator.build_migration_report
+
+            def replace_root_after_report(*args, **kwargs):
+                report = original_report(*args, **kwargs)
+                os.replace(root, moved)
+                root.symlink_to(outside, target_is_directory=True)
+                return report
+
+            with mock.patch.object(migrator, "build_migration_report", side_effect=replace_root_after_report):
+                result = migrator.apply_migration(root, "0.5.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "root_identity_changed")
+            self.assertEqual(list(outside.iterdir()), [])
+            root.unlink()
+            shutil.move(moved, root)
 
     def test_missing_and_existing_manifest_versions_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:

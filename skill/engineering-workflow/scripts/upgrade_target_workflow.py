@@ -6,9 +6,10 @@ import difflib
 import json
 import os
 import re
+import stat
 import subprocess
-import tempfile
 import tomllib
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,12 +32,272 @@ AGENT_TEMPLATE_ROOT = SKILL_ROOT / "assets" / "agents"
 CANONICAL_SOURCE_REPO = "https://github.com/xeonvs/codex-engineering-workflow"
 PLAN_MARKER_START = "<!-- engineering-workflow:upgrade-plan:start -->"
 PLAN_MARKER_END = "<!-- engineering-workflow:upgrade-plan:end -->"
+TARGET_VERSION_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class MigrationConflict(RuntimeError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def _validate_target_version(value: str) -> str:
+    if not TARGET_VERSION_RE.fullmatch(value):
+        raise MigrationConflict("invalid_target_version", "Target workflow version must be valid SemVer")
+    return value
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    try:
+        details = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise MigrationConflict("root_identity_changed", "Target repository identity is no longer available") from exc
+    if not stat.S_ISDIR(details.st_mode):
+        raise MigrationConflict("root_identity_changed", "Target repository path is no longer the audited directory")
+    return details.st_dev, details.st_ino
+
+
+class _SecureRoot:
+    """Perform target reads and writes through a pinned, no-follow root descriptor."""
+
+    def __init__(self, root: Path, expected_identity: tuple[int, int]):
+        required = (os.open, os.mkdir, os.unlink, os.rmdir, os.stat)
+        if (
+            not hasattr(os, "O_DIRECTORY")
+            or not hasattr(os, "O_NOFOLLOW")
+            or any(function not in os.supports_dir_fd for function in required)
+        ):
+            raise MigrationConflict(
+                "secure_filesystem_unavailable",
+                "This platform cannot enforce descriptor-relative no-follow migration writes",
+            )
+        self.root = root
+        self.expected_identity = expected_identity
+        self.created_directories: list[str] = []
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            self._root_fd = os.open(root, flags)
+        except OSError as exc:
+            raise MigrationConflict("root_identity_changed", "Target repository root changed after audit") from exc
+        try:
+            opened = os.fstat(self._root_fd)
+            if (opened.st_dev, opened.st_ino) != expected_identity:
+                raise MigrationConflict("root_identity_changed", "Target repository root changed after audit")
+            self.assert_identity()
+        except Exception:
+            os.close(self._root_fd)
+            raise
+
+    def __enter__(self) -> _SecureRoot:
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        os.close(self._root_fd)
+
+    def assert_identity(self) -> None:
+        if _directory_identity(self.root) != self.expected_identity:
+            raise MigrationConflict("root_identity_changed", "Target repository root changed after audit")
+        opened = os.fstat(self._root_fd)
+        if (opened.st_dev, opened.st_ino) != self.expected_identity:
+            raise MigrationConflict("root_identity_changed", "Pinned target repository identity changed")
+
+    @staticmethod
+    def _parts(relative: str) -> tuple[str, ...]:
+        normalized = Path(relative.replace("\\", "/"))
+        if (
+            normalized.is_absolute()
+            or not normalized.parts
+            or re.match(r"^[A-Za-z]:/", normalized.as_posix())
+            or any(part in {"", ".", ".."} for part in normalized.parts)
+        ):
+            raise MigrationConflict("unsafe_target_path", "Migration path must be normalized and relative")
+        return normalized.parts
+
+    def _open_parent(self, relative: str, *, create: bool) -> tuple[int, str]:
+        parts = self._parts(relative)
+        current = os.dup(self._root_fd)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            traversed: list[str] = []
+            for part in parts[:-1]:
+                traversed.append(part)
+                self.assert_identity()
+                try:
+                    following = os.open(part, flags, dir_fd=current)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    os.mkdir(part, mode=0o755, dir_fd=current)
+                    created = Path(*traversed).as_posix()
+                    if created not in self.created_directories:
+                        self.created_directories.append(created)
+                    following = os.open(part, flags, dir_fd=current)
+                except OSError as exc:
+                    raise MigrationConflict(
+                        "unsafe_target_path",
+                        "Migration parent is missing, replaced, or symbolic",
+                    ) from exc
+                os.close(current)
+                current = following
+            return current, parts[-1]
+        except Exception:
+            os.close(current)
+            raise
+
+    def _verify_parent(self, relative: str, parent_fd: int) -> None:
+        verification, _leaf = self._open_parent(relative, create=False)
+        try:
+            actual = os.fstat(parent_fd)
+            reopened = os.fstat(verification)
+            if (actual.st_dev, actual.st_ino) != (reopened.st_dev, reopened.st_ino):
+                raise MigrationConflict("target_path_changed", "Migration parent changed during apply")
+        finally:
+            os.close(verification)
+
+    def exists(self, relative: str) -> bool:
+        try:
+            parent, leaf = self._open_parent(relative, create=False)
+        except FileNotFoundError:
+            return False
+        try:
+            try:
+                details = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            if stat.S_ISLNK(details.st_mode):
+                raise MigrationConflict("unsafe_target_path", "Migration target is symbolic")
+            return True
+        finally:
+            os.close(parent)
+
+    def read_bytes(self, relative: str, *, missing_ok: bool = False) -> bytes | None:
+        try:
+            parent, leaf = self._open_parent(relative, create=False)
+        except FileNotFoundError:
+            if missing_ok:
+                return None
+            raise MigrationConflict("missing_target_path", "Required migration path is missing")
+        descriptor: int | None = None
+        try:
+            try:
+                descriptor = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+            except FileNotFoundError:
+                if missing_ok:
+                    return None
+                raise MigrationConflict("missing_target_path", "Required migration path is missing")
+            except OSError as exc:
+                raise MigrationConflict("unsafe_target_path", "Migration target is not a safe regular file") from exc
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode):
+                raise MigrationConflict("unsafe_target_path", "Migration target is not a regular file")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            os.close(parent)
+
+    def read_text(self, relative: str, *, missing_ok: bool = False) -> str:
+        data = self.read_bytes(relative, missing_ok=missing_ok)
+        if data is None:
+            return ""
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise MigrationConflict("invalid_target_text", "Migration target text is not UTF-8") from exc
+
+    def write_bytes(self, relative: str, data: bytes) -> None:
+        parent, leaf = self._open_parent(relative, create=True)
+        descriptor: int | None = None
+        temporary = f".{leaf}.{uuid.uuid4().hex}.tmp"
+        try:
+            try:
+                existing = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None and not stat.S_ISREG(existing.st_mode):
+                raise MigrationConflict("unsafe_target_path", "Migration target is not a regular file")
+            file_mode = stat.S_IMODE(existing.st_mode) if existing is not None else 0o644
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                file_mode,
+                dir_fd=parent,
+            )
+            offset = 0
+            while offset < len(data):
+                offset += os.write(descriptor, data[offset:])
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = None
+            self.assert_identity()
+            self._verify_parent(relative, parent)
+            try:
+                os.replace(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent)
+            except TypeError as exc:
+                raise MigrationConflict(
+                    "secure_filesystem_unavailable",
+                    "Descriptor-relative atomic replacement is unavailable",
+                ) from exc
+            os.fsync(parent)
+        except Exception:
+            if descriptor is not None:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary, dir_fd=parent)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(parent)
+
+    def write_text(self, relative: str, text: str) -> None:
+        self.write_bytes(relative, text.encode("utf-8"))
+
+    def unlink(self, relative: str) -> None:
+        try:
+            parent, leaf = self._open_parent(relative, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            try:
+                details = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if not stat.S_ISREG(details.st_mode):
+                raise MigrationConflict("unsafe_target_path", "Rollback target is not a regular file")
+            self.assert_identity()
+            self._verify_parent(relative, parent)
+            os.unlink(leaf, dir_fd=parent)
+        finally:
+            os.close(parent)
+
+    def rmdir(self, relative: str) -> None:
+        try:
+            parent, leaf = self._open_parent(relative, create=False)
+        except FileNotFoundError:
+            return
+        try:
+            try:
+                details = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if not stat.S_ISDIR(details.st_mode):
+                raise MigrationConflict("unsafe_target_path", "Rollback directory is no longer a directory")
+            self.assert_identity()
+            self._verify_parent(relative, parent)
+            os.rmdir(leaf, dir_fd=parent)
+        finally:
+            os.close(parent)
 
 
 def _read(path: Path) -> str:
@@ -246,6 +507,7 @@ def _proposed_changes(root: Path, include_agent_config: bool) -> list[dict[str, 
 
 
 def build_migration_report(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
+    target_version = _validate_target_version(target_version)
     root = repo.resolve()
     if not root.is_dir():
         raise MigrationConflict("missing_repository", "Target repository does not exist")
@@ -424,21 +686,6 @@ def _put_plan_first(existing: str, plan: str) -> str:
     return "# Execution Plans\n\n" + plan + "\n" + existing
 
 
-def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.replace(temp_name, path)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except OSError:
-            pass
-        raise
-
-
 def _merge_codex_config(text: str) -> tuple[str, str]:
     try:
         parsed = tomllib.loads(text) if text.strip() else {}
@@ -510,151 +757,289 @@ def _manifest_text(
 
 def apply_migration(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
     root = repo.resolve()
+    expected_root_identity = _directory_identity(root)
     report = build_migration_report(root, target_version, include_agent_config)
     if report["required_user_questions"]:
         return {**report, "success": False, "mode": "apply", "update_status": "question_required", "mutation_log": []}
-    if not report["success"]:
-        return {**report, "success": False, "mode": "apply", "update_status": "conflict", "mutation_log": []}
-
-    snapshots: dict[Path, bytes | None] = {}
-    mutation_log: list[str] = []
-    created: list[str] = []
-    changed: list[str] = []
-    config_diff = ""
-    protected_snapshots = {
-        relative: (root / relative).read_bytes()
-        for relative in report["protected_paths"]
-        if (root / relative).is_file() and not (root / relative).is_symlink()
-    }
-
-    def write(relative: str, text: str) -> None:
-        path = root / relative
-        if path not in snapshots:
-            snapshots[path] = path.read_bytes() if path.exists() else None
-        before = _read(path) if path.exists() else None
-        _atomic_write(path, text)
-        mutation_log.append(relative)
-        (created if before is None else changed).append(relative)
-
-    plans_path = root / "PLANS.md"
-    initial_plan = _migration_plan(target_version, include_agent_config)
-    write("PLANS.md", _put_plan_first(_read(plans_path), initial_plan))
-
-    try:
-        template_map = {
-            "AGENTS.md": (
-                "AGENTS.md.tmpl",
-                {
-                    "entrypoint_hint": "README.md" if (root / "README.md").exists() else ".",
-                    "subsystem_hint": "src/" if (root / "src").exists() else ".",
-                },
-            ),
-            CANONICAL_FILES["principles"]: ("project_principles.md.tmpl", {}),
-            CANONICAL_FILES["backlog"]: ("TASKS_BACKLOG.md.tmpl", {}),
-            CANONICAL_FILES["pitfalls"]: ("AGENT_EXECUTION_PITFALLS.md.tmpl", {}),
-        }
-        for relative, (name, replacements) in template_map.items():
-            if not _present(root / relative):
-                write(relative, _template(name, replacements))
-
-        if include_agent_config:
-            config_path = root / ".codex" / "config.toml"
-            merged, config_diff = _merge_codex_config(_read(config_path))
-            if merged != _read(config_path):
-                write(".codex/config.toml", merged)
-            for name in ("utility", "explorer", "reviewer"):
-                relative = f".codex/agents/{name}.toml"
-                if not _present(root / relative):
-                    write(relative, (AGENT_TEMPLATE_ROOT / f"{name}.toml.tmpl").read_text(encoding="utf-8"))
-
-        shared_paths = [path for path in CANONICAL_FILES.values() if _present(root / path)]
-        if include_agent_config:
-            shared_paths.extend(
-                path.relative_to(root).as_posix()
-                for path in (root / ".codex" / "agents").glob("*.toml")
-            )
-            if _present(root / ".codex" / "config.toml"):
-                shared_paths.append(".codex/config.toml")
-        manifest = _manifest_text(
-            target_version,
-            report["protected_paths"],
-            sorted(set(shared_paths)),
-            include_agent_config,
-        )
-        if scan_privacy_text(manifest):
-            raise MigrationConflict("unsafe_manifest", "Generated manifest contains private data")
-        write(STATE_MANIFEST_PATH, manifest)
-
-        plan_issues = validate_plan_schema(_read(plans_path), declared_external_sources=True)
-        if plan_issues:
-            raise MigrationConflict("invalid_generated_plan", "; ".join(plan_issues))
-        if include_agent_config:
-            tomllib.loads(_read(root / ".codex" / "config.toml"))
-            for path in (root / ".codex" / "agents").glob("*.toml"):
-                tomllib.loads(_read(path))
-
-        for relative, expected in protected_snapshots.items():
-            path = root / relative
-            if not path.is_file() or path.read_bytes() != expected:
-                raise MigrationConflict("protected_file_changed", f"Protected file changed during migration: {relative}")
-
-        final_result = "Plan schema, ownership manifest, privacy, protected-file, and optional TOML checks passed."
-        final_plan = _migration_plan(target_version, include_agent_config, done=True, result=final_result)
-        write("PLANS.md", _put_plan_first(_read(plans_path), final_plan))
-    except Exception as exc:
-        for path, data in reversed(list(snapshots.items())):
-            if path == plans_path:
-                continue
-            if data is None:
-                if path.exists():
-                    path.unlink()
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(data)
-        failure = _migration_plan(target_version, include_agent_config, result=f"Apply failed and non-plan files were restored: {type(exc).__name__}.")
-        _atomic_write(plans_path, _put_plan_first(_read(plans_path), failure))
+    if report["privacy_findings"]:
         return {
             **report,
             "success": False,
             "mode": "apply",
-            "update_status": "rolled_back",
-            "errors": [{"type": type(exc).__name__, "message": str(exc)}],
-            "mutation_log": mutation_log,
-            "config_diff": config_diff,
+            "update_status": "privacy_review_required",
+            "mutation_log": [],
+            "validation_result": {"success": False, "privacy": False},
+        }
+    if not report["success"]:
+        return {**report, "success": False, "mode": "apply", "update_status": "conflict", "mutation_log": []}
+
+    try:
+        secure_root = _SecureRoot(root, expected_root_identity)
+    except MigrationConflict as exc:
+        return {
+            **report,
+            "success": False,
+            "mode": "apply",
+            "update_status": exc.code,
+            "errors": [{"code": exc.code, "message": str(exc)}],
+            "mutation_log": [],
+            "validation_result": {"success": False, "privacy": True},
         }
 
-    return {
-        **report,
-        "success": True,
-        "mode": "apply",
-        "update_status": "updated",
-        "created_files": sorted(set(created)),
-        "changed_files": sorted(set(changed)),
-        "mutation_log": mutation_log,
-        "config_diff": config_diff,
-        "validation_result": {"success": True, "plan_schema": True, "privacy": True, "toml": True},
+    with secure_root as secure:
+        snapshots: dict[str, bytes | None] = {}
+        mutation_log: list[str] = []
+        created: list[str] = []
+        changed: list[str] = []
+        config_diff = ""
+        final_privacy_findings: list[dict[str, int | str]] = []
+
+        try:
+            protected_snapshots = {}
+            for relative in report["protected_paths"]:
+                data = secure.read_bytes(relative, missing_ok=True)
+                if data is not None:
+                    protected_snapshots[relative] = data
+        except MigrationConflict as exc:
+            return {
+                **report,
+                "success": False,
+                "mode": "apply",
+                "update_status": exc.code,
+                "errors": [{"code": exc.code, "message": str(exc)}],
+                "mutation_log": [],
+                "validation_result": {"success": False, "privacy": True},
+            }
+
+        def read(relative: str) -> str:
+            return secure.read_text(relative, missing_ok=True)
+
+        def write(relative: str, text: str) -> None:
+            if relative not in snapshots:
+                snapshots[relative] = secure.read_bytes(relative, missing_ok=True)
+            before = snapshots[relative]
+            secure.write_text(relative, text)
+            mutation_log.append(relative)
+            (created if before is None else changed).append(relative)
+
+        try:
+            initial_plan = _migration_plan(target_version, include_agent_config)
+            write("PLANS.md", _put_plan_first(read("PLANS.md"), initial_plan))
+
+            template_map = {
+                "AGENTS.md": (
+                    "AGENTS.md.tmpl",
+                    {
+                        "entrypoint_hint": "README.md" if secure.exists("README.md") else ".",
+                        "subsystem_hint": "src/" if secure.exists("src") else ".",
+                    },
+                ),
+                CANONICAL_FILES["principles"]: ("project_principles.md.tmpl", {}),
+                CANONICAL_FILES["backlog"]: ("TASKS_BACKLOG.md.tmpl", {}),
+                CANONICAL_FILES["pitfalls"]: ("AGENT_EXECUTION_PITFALLS.md.tmpl", {}),
+            }
+            for relative, (name, replacements) in template_map.items():
+                if not secure.exists(relative):
+                    write(relative, _template(name, replacements))
+
+            if include_agent_config:
+                existing_config = read(".codex/config.toml")
+                merged, config_diff = _merge_codex_config(existing_config)
+                if merged != existing_config:
+                    write(".codex/config.toml", merged)
+                for name in ("utility", "explorer", "reviewer"):
+                    relative = f".codex/agents/{name}.toml"
+                    if not secure.exists(relative):
+                        write(
+                            relative,
+                            (AGENT_TEMPLATE_ROOT / f"{name}.toml.tmpl").read_text(encoding="utf-8"),
+                        )
+
+            shared_paths = [path for path in CANONICAL_FILES.values() if secure.exists(path)]
+            if include_agent_config:
+                shared_paths.extend(
+                    f".codex/agents/{name}.toml"
+                    for name in ("utility", "explorer", "reviewer")
+                    if secure.exists(f".codex/agents/{name}.toml")
+                )
+                if secure.exists(".codex/config.toml"):
+                    shared_paths.append(".codex/config.toml")
+            manifest = _manifest_text(
+                target_version,
+                report["protected_paths"],
+                sorted(set(shared_paths)),
+                include_agent_config,
+            )
+            if scan_privacy_text(manifest):
+                raise MigrationConflict("unsafe_manifest", "Generated manifest contains private data")
+            write(STATE_MANIFEST_PATH, manifest)
+
+            plan_issues = validate_plan_schema(read("PLANS.md"), declared_external_sources=True)
+            if plan_issues:
+                raise MigrationConflict("invalid_generated_plan", "; ".join(plan_issues))
+            if include_agent_config:
+                tomllib.loads(read(".codex/config.toml"))
+                for name in ("utility", "explorer", "reviewer"):
+                    tomllib.loads(read(f".codex/agents/{name}.toml"))
+
+            for relative, expected in protected_snapshots.items():
+                if secure.read_bytes(relative, missing_ok=True) != expected:
+                    raise MigrationConflict("protected_file_changed", "A protected file changed during migration")
+
+            final_result = "Plan schema, ownership manifest, privacy, protected-file, and optional TOML checks passed."
+            final_plan = _migration_plan(target_version, include_agent_config, done=True, result=final_result)
+            write("PLANS.md", _put_plan_first(read("PLANS.md"), final_plan))
+            final_plan_issues = validate_plan_schema(read("PLANS.md"), declared_external_sources=True)
+            if final_plan_issues:
+                raise MigrationConflict("invalid_generated_plan", "; ".join(final_plan_issues))
+
+            secure.assert_identity()
+            final_privacy_findings = scan_public_tree(root)
+            secure.assert_identity()
+            if final_privacy_findings:
+                raise MigrationConflict(
+                    "privacy_review_required",
+                    "Final pre-success privacy scan found public content requiring review",
+                )
+        except Exception as exc:
+            code = exc.code if isinstance(exc, MigrationConflict) else type(exc).__name__
+            rollback_errors: list[str] = []
+            for relative, data in reversed(list(snapshots.items())):
+                if relative == "PLANS.md":
+                    continue
+                try:
+                    if data is None:
+                        secure.unlink(relative)
+                    else:
+                        secure.write_bytes(relative, data)
+                except Exception as restore_error:
+                    rollback_errors.append(type(restore_error).__name__)
+            for relative in reversed(secure.created_directories):
+                try:
+                    secure.rmdir(relative)
+                except Exception as restore_error:
+                    rollback_errors.append(type(restore_error).__name__)
+            try:
+                failure = _migration_plan(
+                    target_version,
+                    include_agent_config,
+                    result=f"Apply failed and non-plan files were restored: {type(exc).__name__}.",
+                )
+                secure.write_text("PLANS.md", _put_plan_first(read("PLANS.md"), failure))
+            except Exception as plan_error:
+                rollback_errors.append(type(plan_error).__name__)
+            rollback_failed = bool(rollback_errors)
+            update_status = (
+                "rollback_failed"
+                if rollback_failed
+                else ("privacy_review_required" if code == "privacy_review_required" else "rolled_back")
+            )
+            return {
+                **report,
+                "privacy_findings": final_privacy_findings or report["privacy_findings"],
+                "success": False,
+                "mode": "apply",
+                "update_status": update_status,
+                "errors": [{"code": code, "message": str(exc)}],
+                "rollback_errors": rollback_errors,
+                "mutation_log": mutation_log,
+                "config_diff": config_diff,
+                "validation_result": {
+                    "success": False,
+                    "privacy": code != "privacy_review_required",
+                },
+            }
+
+        return {
+            **report,
+            "success": True,
+            "mode": "apply",
+            "update_status": "updated",
+            "created_files": sorted(set(created)),
+            "changed_files": sorted(set(changed)),
+            "mutation_log": mutation_log,
+            "config_diff": config_diff,
+            "validation_result": {"success": True, "plan_schema": True, "privacy": True, "toml": True},
+        }
+
+
+def execute_prompt_upgrade(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
+    """Run report-first migration for an authorized natural-language target-upgrade request."""
+    report = build_migration_report(repo, target_version, include_agent_config)
+    if report["required_user_questions"]:
+        return {
+            **report,
+            "success": False,
+            "mode": "prompt",
+            "update_status": "question_required",
+            "agent_action": "ask_targeted_question",
+            "question_to_ask": report["required_user_questions"][0],
+            "report_reviewed": True,
+            "mutation_log": [],
+        }
+    if report["privacy_findings"]:
+        return {
+            **report,
+            "success": False,
+            "mode": "prompt",
+            "update_status": "privacy_review_required",
+            "agent_action": "report_privacy_findings",
+            "report_reviewed": True,
+            "mutation_log": [],
+        }
+    if not report["success"]:
+        return {
+            **report,
+            "success": False,
+            "mode": "prompt",
+            "update_status": "conflict",
+            "agent_action": "stop_on_conflict",
+            "report_reviewed": True,
+            "mutation_log": [],
+        }
+
+    applied = apply_migration(repo, target_version, include_agent_config)
+    if applied.get("update_status") == "question_required":
+        agent_action = "ask_targeted_question"
+    elif applied.get("update_status") == "privacy_review_required":
+        agent_action = "report_privacy_findings"
+    elif applied.get("success"):
+        agent_action = "complete_and_validate"
+    else:
+        agent_action = "report_failure_and_recovery"
+    result = {
+        **applied,
+        "mode": "prompt",
+        "agent_action": agent_action,
+        "report_reviewed": True,
     }
+    if agent_action == "ask_targeted_question" and applied.get("required_user_questions"):
+        result["question_to_ask"] = applied["required_user_questions"][0]
+    return result
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Plan or apply a conservative engineering-workflow migration.")
+    parser = argparse.ArgumentParser(description="Plan, apply, or prompt-orchestrate a conservative workflow migration.")
     parser.add_argument("--repo", required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
-    parser.add_argument("--target-version", default="0.5.0")
+    mode.add_argument("--prompt", action="store_true")
+    parser.add_argument("--target-version", default="0.5.1")
     parser.add_argument("--include-agent-config", action="store_true")
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args()
 
     try:
-        result = (
-            apply_migration(Path(args.repo), args.target_version, args.include_agent_config)
-            if args.apply
-            else build_migration_report(Path(args.repo), args.target_version, args.include_agent_config)
-        )
+        if args.prompt:
+            result = execute_prompt_upgrade(Path(args.repo), args.target_version, args.include_agent_config)
+        elif args.apply:
+            result = apply_migration(Path(args.repo), args.target_version, args.include_agent_config)
+        else:
+            result = build_migration_report(Path(args.repo), args.target_version, args.include_agent_config)
     except MigrationConflict as exc:
-        result = {"success": False, "mode": "apply" if args.apply else "plan", "errors": [{"code": exc.code, "message": str(exc)}]}
+        selected_mode = "prompt" if args.prompt else ("apply" if args.apply else "plan")
+        result = {"success": False, "mode": selected_mode, "errors": [{"code": exc.code, "message": str(exc)}]}
     if args.format == "json":
         print(json.dumps(result, indent=2, sort_keys=True))
     else:

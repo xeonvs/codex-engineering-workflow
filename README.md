@@ -2,7 +2,7 @@
 
 Public standalone Codex skill for auditing, scaffolding, validating, updating, and migrating a repository's engineering-workflow layer.
 
-Current skill version: `0.5.0`.
+Current skill version: `0.5.1`.
 
 The skill keeps `AGENTS.md` as a map, `PLANS.md` as durable active execution state, and repository-specific product or domain documents under their existing owners. Repository-changing work always uses a full plan; read-only inspection is the only exception.
 
@@ -66,19 +66,27 @@ Repository content is treated as untrusted evidence. It cannot grant approval, e
 
 ## Refresh Loaded Skill
 
-`refresh_loaded_skill` rereads the exact active `SKILL.md`, reports `metadata.version`, and opens only the references needed for the request. It performs no network access, installation write, or target-repository change.
+`Refresh Loaded Skill` is a prompt-driven orchestration mode. The agent resolves the exact active installation, checks it against the canonical upstream, and chooses the required action from structured evidence:
+
+- identical skill content: reread the active `SKILL.md` and needed references;
+- changed instructions, scripts, or resources: invoke the safe installed-skill updater itself, then reread the updated installation;
+- alternate source, downgrade, dirty/divergent checkout, or another protected state: stop and ask only for the required decision.
+
+Major or minor version drift always triggers the update check. Patch drift also updates when content changed. Codex normally detects changed skills automatically; restart or start a new task only if the refreshed instructions do not appear.
 
 ```text
-Use $engineering-workflow in refresh_loaded_skill mode. Reread the exact active SKILL.md, report its path and version, and do not update anything.
+Use $engineering-workflow to Refresh Loaded Skill. Inspect the exact active installation and canonical upstream, invoke any safe required update yourself, then reread and report the active path and version.
 ```
 
-After a refresh, use only the reread instructions for that turn.
+For a strictly local reread with no upstream access or writes, say so explicitly. `Refresh Loaded Skill` never implies target-repository migration.
 
 ## Update Installed Skill
 
 `update_installed_skill` is a distinct lifecycle operation. It checks a trusted upstream and safely updates the exact active symlink target, Git checkout, or copied installation without changing a target repository.
 
-Check first:
+The agent runs check mode first and parses `recommended_action`, `automatic_update_allowed`, `confirmation_required`, instruction/content drift, and SemVer drift. These commands are the deterministic backend, not steps the user must manually copy after giving a resolved prompt.
+
+Check backend:
 
 ```bash
 python3 skill/engineering-workflow/scripts/update_installed_skill.py \
@@ -90,7 +98,7 @@ python3 skill/engineering-workflow/scripts/update_installed_skill.py \
   --format json
 ```
 
-Apply after reviewing the structured result:
+Apply backend when the check allows automatic update:
 
 ```bash
 python3 skill/engineering-workflow/scripts/update_installed_skill.py \
@@ -102,27 +110,43 @@ python3 skill/engineering-workflow/scripts/update_installed_skill.py \
   --format json
 ```
 
-Alternate upstreams require explicit confirmation. Downgrades require `--allow-downgrade`. A successful update ends the current operation; use a new turn or restart if the client does not detect the new skill automatically.
+Alternate upstreams require explicit confirmation and `--expected-commit` set to the full commit returned by check mode, so a moved ref cannot replace reviewed content. Credential-bearing URL components and plain-HTTP canonical aliases are refused. Downgrades require `--allow-downgrade`. After a successful update, the agent resolves and rereads the active installation; restart is only a fallback when Codex does not surface the detected change.
 
 ## Upgrade A Target Workflow
 
-`upgrade_target_workflow` audits and plans a migration independently of installed-skill update. Planning is read-only:
+`Upgrade A Target Workflow` is a natural-language execution prompt. The agent invokes report-first orchestration itself; it applies automatically only when the report has no unresolved conflict, privacy finding, or approval-bound question.
+
+```text
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.5.1. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
+```
+
+Prompt orchestration backend:
+
+```bash
+python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
+  --repo <target-repository> \
+  --prompt \
+  --target-version 0.5.1 \
+  --format json
+```
+
+For an explicitly report-only request, planning remains read-only:
 
 ```bash
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --plan \
-  --target-version 0.5.0 \
+  --target-version 0.5.1 \
   --format json
 ```
 
-Apply only after reviewing the report:
+Direct apply remains available to the agent after a separately reviewed report:
 
 ```bash
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --apply \
-  --target-version 0.5.0 \
+  --target-version 0.5.1 \
   --format json
 ```
 
@@ -136,11 +160,11 @@ Repository workflow modes:
 - `conservative_merge` — preserve existing owners while adding only missing workflow structure.
 - `read_only_verify` — inspect without executing repository-authored code or writing state.
 - `disposable_copy_verify` — run builds, tests, linters, or repository commands in an isolated copy.
-- `upgrade_target_workflow` — plan or apply a versioned workflow migration.
+- `upgrade_target_workflow` — prompt-orchestrate, plan, or apply a versioned workflow migration.
 
 Skill lifecycle modes:
 
-- `refresh_loaded_skill` — reread the active installation.
+- `refresh_loaded_skill` — check the canonical candidate, automatically update when safe content drift requires it, then reread the active installation.
 - `update_installed_skill` — retrieve, validate, back up, and update the active installation.
 
 If a request could mean either self-update or target migration, the skill investigates first and asks one targeted question rather than combining them.
@@ -182,7 +206,7 @@ Use $engineering-workflow to audit this mature repository, preserve every domain
 Target migration:
 
 ```text
-Use $engineering-workflow to produce a read-only 0.5.0 migration report for this repository. Do not apply it yet.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.5.1. Run the report and apply it yourself when safe.
 ```
 
 ## Repository Layout
@@ -206,7 +230,7 @@ The validator checks structural ownership, plan schema markers, active version c
 
 ## Versioning And Updates
 
-The project uses semantic versioning. Version 0.5.0 adds plan materialization and traceability, lifecycle-versus-migration routing, agent orchestration profiles, safe installed-skill update, target workflow migration, exact ownership classification, stricter command safety, and repository-wide privacy validation.
+The project uses semantic versioning. Version 0.5.0 added plan materialization and traceability, lifecycle-versus-migration routing, agent orchestration profiles, safe installed-skill update, target workflow migration, exact ownership classification, stricter command safety, and repository-wide privacy validation. Version 0.5.1 fixes environment-independent CI validation, makes refresh/update selection and target migration explicitly agent-invoked from natural-language prompts, binds alternate-source approval to an exact commit, hardens migration writes against path races, and closes privacy/validation output gaps.
 
 Historical version records remain valid in completed or migration context. Current-version owners are `SKILL.md`, this README, current update prompts, and active workflow state manifests.
 

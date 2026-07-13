@@ -12,7 +12,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -23,18 +23,24 @@ SEMVER_RE = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
-REQUIRED_CANDIDATE_PATHS = (
-    "SKILL.md",
-    "references",
-    "scripts",
-    "agents/openai.yaml",
-)
+INSTRUCTION_FILES = {"SKILL.md", "agents/openai.yaml"}
+INSTRUCTION_PREFIXES = ("references/",)
+FULL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class UpdateConflict(RuntimeError):
-    def __init__(self, code: str, message: str):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        recovery_path: Path | None = None,
+        backup_path: Path | None = None,
+    ):
         super().__init__(message)
         self.code = code
+        self.recovery_path = recovery_path
+        self.backup_path = backup_path
 
 
 def _run_git(*args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -43,11 +49,11 @@ def _run_git(*args: str, cwd: Path | None = None, check: bool = True) -> subproc
         cwd=cwd,
         capture_output=True,
         text=True,
+        errors="surrogateescape",
         check=False,
     )
     if check and completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "git command failed"
-        raise UpdateConflict("git_error", detail)
+        raise UpdateConflict("git_error", "Git operation failed")
     return completed
 
 
@@ -76,9 +82,13 @@ def _frontmatter(text: str) -> dict[str, str]:
 
 def read_skill_identity(skill_dir: Path) -> dict[str, str]:
     skill_file = skill_dir / "SKILL.md"
-    if not skill_file.is_file():
+    if skill_file.is_symlink() or not skill_file.is_file():
         raise UpdateConflict("missing_skill_file", "Candidate or installation is missing SKILL.md")
-    metadata = _frontmatter(skill_file.read_text(encoding="utf-8"))
+    try:
+        text = skill_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise UpdateConflict("invalid_skill_file", "SKILL.md must be a readable UTF-8 regular file") from exc
+    metadata = _frontmatter(text)
     name = metadata.get("name", "")
     version = metadata.get("metadata.version", "")
     if not name:
@@ -106,7 +116,7 @@ def _semver_key(version: str) -> tuple[int, int, int, tuple[tuple[int, str], ...
 def _normalized_repo(value: str) -> str:
     stripped = value.strip().rstrip("/")
     github_patterns = (
-        re.compile(r"^https?://github\.com/(?P<path>[^/]+/[^/]+?)(?:\.git)?$", re.IGNORECASE),
+        re.compile(r"^https://github\.com/(?P<path>[^/]+/[^/]+?)(?:\.git)?$", re.IGNORECASE),
         re.compile("^ssh" + r"://" + "git" + r"@github\.com/(?P<path>[^/]+/[^/]+?)(?:\.git)?$", re.IGNORECASE),
         re.compile("^git" + r"@github\.com:(?P<path>[^/]+/[^/]+?)(?:\.git)?$", re.IGNORECASE),
     )
@@ -124,16 +134,20 @@ def _public_source_label(value: str) -> str:
         parsed = urlsplit(value)
     except ValueError:
         return "invalid-source-url"
-    if parsed.scheme.lower() not in {"http", "https"} or parsed.username is None:
+    if not parsed.netloc:
+        if parsed.query or parsed.fragment:
+            return urlunsplit((parsed.scheme, "", parsed.path, "", ""))
         return value
     host = parsed.hostname or "redacted-source"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     try:
         port = parsed.port
     except ValueError:
-        port = None
+        return "invalid-source-url"
     if port is not None:
         host = f"{host}:{port}"
-    return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+    return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
 
 
 def _reject_source_credentials(value: str) -> None:
@@ -141,8 +155,21 @@ def _reject_source_credentials(value: str) -> None:
         parsed = urlsplit(value)
     except ValueError as exc:
         raise UpdateConflict("invalid_source_url", "Source repository URL is malformed") from exc
-    if parsed.scheme.lower() in {"http", "https"} and parsed.username is not None:
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise UpdateConflict("invalid_source_url", "Source repository URL is malformed") from exc
+    http_userinfo = parsed.scheme.lower() in {"http", "https"} and parsed.username is not None
+    if http_userinfo or parsed.password is not None or parsed.query or parsed.fragment:
         raise UpdateConflict("source_credentials_refused", "Source repository URL must not contain embedded credentials")
+
+
+def _validated_expected_commit(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not FULL_COMMIT_RE.fullmatch(value):
+        raise UpdateConflict("invalid_expected_commit", "Expected commit must be a full 40-character Git object ID")
+    return value.lower()
 
 
 def is_canonical_upstream(source_repo: str) -> bool:
@@ -172,13 +199,19 @@ def _validate_symlinks(candidate: Path) -> None:
 def validate_candidate(candidate: Path) -> dict[str, Any]:
     if not candidate.is_dir():
         raise UpdateConflict("missing_source_path", "Source path is not a directory in the selected ref")
-    for relative in REQUIRED_CANDIDATE_PATHS:
-        if not (candidate / relative).exists():
-            raise UpdateConflict("invalid_candidate", f"Candidate is missing required path: {relative}")
+    _validate_symlinks(candidate)
+    required_files = ("SKILL.md", "agents/openai.yaml")
+    required_directories = ("references", "scripts")
+    if any((candidate / relative).is_symlink() or not (candidate / relative).is_file() for relative in required_files):
+        raise UpdateConflict("invalid_candidate", "Candidate is missing a required regular file")
+    if any(
+        (candidate / relative).is_symlink() or not (candidate / relative).is_dir()
+        for relative in required_directories
+    ):
+        raise UpdateConflict("invalid_candidate", "Candidate is missing a required directory")
     identity = read_skill_identity(candidate)
     if identity["name"] != "engineering-workflow":
         raise UpdateConflict("wrong_skill_name", "Candidate SKILL.md has the wrong skill name")
-    _validate_symlinks(candidate)
     return {"success": True, "name": identity["name"], "version": identity["version"]}
 
 
@@ -228,7 +261,10 @@ def _materialize_tree(checkout: Path, resolved: str, source_path: str, candidate
                 link_target = blob.stdout.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise UpdateConflict("invalid_candidate_symlink", "Candidate symlink target is not UTF-8") from exc
-            os.symlink(link_target, destination)
+            try:
+                os.symlink(link_target, destination)
+            except (OSError, ValueError) as exc:
+                raise UpdateConflict("invalid_candidate_symlink", "Candidate symlink target is invalid") from exc
         elif mode in {"100644", "100755"}:
             destination.write_bytes(blob.stdout)
             destination.chmod(0o755 if mode == "100755" else 0o644)
@@ -317,6 +353,71 @@ def diff_summary(current: Path, candidate: Path) -> dict[str, Any]:
     }
 
 
+def _filtered_diff(summary: dict[str, Any], predicate: Callable[[str], bool]) -> dict[str, Any]:
+    filtered = {
+        category: [path for path in summary[category] if predicate(path)]
+        for category in ("added", "modified", "deleted")
+    }
+    filtered["counts"] = {category: len(filtered[category]) for category in ("added", "modified", "deleted")}
+    return filtered
+
+
+def _is_instruction_path(path: str) -> bool:
+    return path in INSTRUCTION_FILES or path.startswith(INSTRUCTION_PREFIXES)
+
+
+def _version_change_kind(previous: str, candidate: str) -> str:
+    previous_match = SEMVER_RE.fullmatch(previous)
+    candidate_match = SEMVER_RE.fullmatch(candidate)
+    if not previous_match or not candidate_match:
+        raise UpdateConflict("invalid_version", "Cannot compare invalid skill versions")
+    if _semver_key(candidate) == _semver_key(previous):
+        return "none"
+    if _semver_key(candidate) < _semver_key(previous):
+        return "downgrade"
+    previous_core = tuple(int(previous_match.group(index)) for index in range(1, 4))
+    candidate_core = tuple(int(candidate_match.group(index)) for index in range(1, 4))
+    if candidate_core[0] != previous_core[0]:
+        return "major"
+    if candidate_core[1] != previous_core[1]:
+        return "minor"
+    if candidate_core[2] != previous_core[2]:
+        return "patch"
+    return "prerelease"
+
+
+def refresh_decision(
+    previous_version: str,
+    candidate_version: str,
+    summary: dict[str, Any],
+    *,
+    canonical_upstream: bool,
+) -> dict[str, Any]:
+    instruction_summary = _filtered_diff(summary, _is_instruction_path)
+    content_changed = any(summary["counts"].values())
+    instructions_changed = any(instruction_summary["counts"].values())
+    version_change = _version_change_kind(previous_version, candidate_version)
+    previous_match = SEMVER_RE.fullmatch(previous_version)
+    candidate_match = SEMVER_RE.fullmatch(candidate_version)
+    assert previous_match is not None and candidate_match is not None
+    major_or_minor_changed = tuple(previous_match.group(index) for index in (1, 2)) != tuple(
+        candidate_match.group(index) for index in (1, 2)
+    )
+    recommended = "update_installed_skill" if content_changed else "refresh_loaded_skill"
+    protected = content_changed and (not canonical_upstream or version_change == "downgrade")
+    return {
+        "skill_content_changed": content_changed,
+        "instructions_changed": instructions_changed,
+        "instruction_diff_summary": instruction_summary,
+        "version_change_kind": version_change,
+        "major_or_minor_version_changed": major_or_minor_changed,
+        "recommended_action": recommended,
+        "next_agent_action": recommended,
+        "automatic_update_allowed": content_changed and not protected,
+        "confirmation_required": content_changed and not canonical_upstream,
+    }
+
+
 def _checkout_state(
     details: dict[str, Any],
     source_repo: str,
@@ -326,9 +427,31 @@ def _checkout_state(
 ) -> dict[str, Any]:
     root = details["git_root"]
     assert isinstance(root, Path)
-    dirty = _run_git("status", "--porcelain", cwd=root).stdout.strip()
+    dirty = _run_git("status", "--porcelain=v1", "--untracked-files=all", cwd=root).stdout.strip()
     if dirty:
         raise UpdateConflict("dirty_checkout", "Git checkout has local changes")
+    installed = Path(str(details["resolved_target_path"]))
+    try:
+        skill_relative = installed.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise UpdateConflict("invalid_installation", "Installed skill is outside its Git checkout") from exc
+    ignored = _run_git(
+        "status",
+        "--porcelain=v1",
+        "--ignored=matching",
+        "--untracked-files=all",
+        "--",
+        skill_relative,
+        cwd=root,
+    ).stdout.splitlines()
+    flagged = _run_git("ls-files", "-v", "--", skill_relative, cwd=root).stdout.splitlines()
+    if any(line.startswith("!! ") for line in ignored) or any(
+        line and (line[0] == "S" or line[0].islower()) for line in flagged
+    ):
+        raise UpdateConflict(
+            "checkout_hidden_drift",
+            "Git checkout contains ignored or index-hidden content in the installed skill tree",
+        )
     remote_result = _run_git("remote", "get-url", "origin", cwd=root, check=False)
     if remote_result.returncode != 0:
         raise UpdateConflict("missing_origin", "Git checkout has no origin remote")
@@ -365,9 +488,26 @@ def _replace_copied_installation(current: Path, candidate: Path, backup_dir: Pat
     resolved_backup_dir = backup_dir.resolve()
     if resolved_backup_dir == resolved_current or resolved_backup_dir.is_relative_to(resolved_current):
         raise UpdateConflict("unsafe_backup_path", "Backup directory must be outside the installed skill tree")
-    backup = _backup_destination(backup_dir, version)
-    shutil.copytree(current, backup, symlinks=True)
-    stage_parent = Path(tempfile.mkdtemp(prefix=".engineering-workflow-stage-", dir=current.parent))
+    backup: Path | None = None
+    try:
+        backup = _backup_destination(backup_dir, version)
+        shutil.copytree(current, backup, symlinks=True)
+    except Exception as exc:
+        if backup is not None and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        raise UpdateConflict(
+            "backup_failed",
+            "Installation backup could not be created; the active installation is unchanged",
+            recovery_path=backup if backup is not None and backup.exists() else None,
+        ) from exc
+    try:
+        stage_parent = Path(tempfile.mkdtemp(prefix=".engineering-workflow-stage-", dir=current.parent))
+    except Exception as exc:
+        raise UpdateConflict(
+            "staging_failed",
+            "Installation staging directory could not be created; the active installation is unchanged",
+            backup_path=backup,
+        ) from exc
     staged = stage_parent / current.name
     rollback = current.parent / f".{current.name}.rollback-{uuid.uuid4().hex}"
     try:
@@ -375,18 +515,50 @@ def _replace_copied_installation(current: Path, candidate: Path, backup_dir: Pat
         os.replace(current, rollback)
         try:
             os.replace(staged, current)
-        except Exception:
-            os.replace(rollback, current)
-            raise
-        shutil.rmtree(rollback)
+        except Exception as replacement_error:
+            try:
+                os.replace(rollback, current)
+            except Exception as restore_error:
+                raise UpdateConflict(
+                    "rollback_failed",
+                    "Copied installation replacement and automatic restore failed; recovery trees were preserved",
+                    recovery_path=rollback,
+                    backup_path=backup,
+                ) from restore_error
+            raise UpdateConflict(
+                "replacement_failed",
+                "Copied installation replacement failed and was rolled back",
+                backup_path=backup,
+            ) from replacement_error
+        try:
+            shutil.rmtree(rollback)
+        except Exception as cleanup_error:
+            raise UpdateConflict(
+                "rollback_cleanup_failed",
+                "Installation was replaced but the rollback tree could not be removed",
+                recovery_path=rollback,
+                backup_path=backup,
+            ) from cleanup_error
+    except UpdateConflict:
+        raise
     except Exception as exc:
         if rollback.exists() and not current.exists():
-            os.replace(rollback, current)
-        raise UpdateConflict("replacement_failed", "Copied installation replacement failed and was rolled back") from exc
+            try:
+                os.replace(rollback, current)
+            except Exception as restore_error:
+                raise UpdateConflict(
+                    "rollback_failed",
+                    "Copied installation replacement and automatic restore failed; recovery trees were preserved",
+                    recovery_path=rollback,
+                    backup_path=backup,
+                ) from restore_error
+        raise UpdateConflict(
+            "replacement_failed",
+            "Copied installation replacement failed and was rolled back",
+            backup_path=backup,
+        ) from exc
     finally:
         shutil.rmtree(stage_parent, ignore_errors=True)
-        if rollback.exists():
-            shutil.rmtree(rollback, ignore_errors=True)
     return backup
 
 
@@ -400,6 +572,7 @@ def update_installation(
     allow_downgrade: bool = False,
     backup_dir: Path | None = None,
     confirm_alternate_upstream: bool = False,
+    expected_commit: str | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": False,
@@ -408,19 +581,46 @@ def update_installation(
         "source_path": source_path,
         "source_ref": ref,
         "resolved_commit": None,
+        "expected_commit": None,
         "previous_version": None,
         "candidate_version": None,
         "active_installation_path": str(install_path.absolute()),
         "resolved_target_path": None,
         "installation_type": None,
         "backup_path": None,
+        "recovery_path": None,
         "validation_result": {"success": False},
         "update_status": "failed",
         "restart_or_next_turn_required": False,
+        "reload_fallback": "restart_if_change_not_detected",
+        "skill_content_changed": None,
+        "instructions_changed": None,
+        "instruction_diff_summary": None,
+        "version_change_kind": None,
+        "major_or_minor_version_changed": None,
+        "recommended_action": None,
+        "next_agent_action": None,
+        "automatic_update_allowed": False,
+        "confirmation_required": False,
         "errors": [],
     }
     try:
+        validated_expected = _validated_expected_commit(expected_commit)
+        result["expected_commit"] = validated_expected
         _reject_source_credentials(source_repo)
+        canonical_upstream = is_canonical_upstream(source_repo)
+        if apply and not canonical_upstream:
+            if not confirm_alternate_upstream:
+                result["update_status"] = "confirmation_required"
+                raise UpdateConflict(
+                    "alternate_upstream_confirmation_required",
+                    "Alternate upstream requires explicit confirmation",
+                )
+            if validated_expected is None:
+                raise UpdateConflict(
+                    "expected_commit_required",
+                    "Alternate-upstream apply requires the full commit returned by check mode",
+                )
         details = _installation_details(install_path, source_path)
         result.update({key: value for key, value in details.items() if key not in {"git_root", "update_strategy"}})
         with tempfile.TemporaryDirectory(prefix="engineering-workflow-update-") as temp_name:
@@ -431,20 +631,47 @@ def update_installation(
             result["validation_result"] = validation
             current = Path(str(result["resolved_target_path"]))
             result["diff_summary"] = diff_summary(current, candidate)
+            result.update(
+                refresh_decision(
+                    str(result["previous_version"]),
+                    validation["version"],
+                    result["diff_summary"],
+                    canonical_upstream=canonical_upstream,
+                )
+            )
 
             if _semver_key(validation["version"]) < _semver_key(str(result["previous_version"])) and not allow_downgrade:
+                result["automatic_update_allowed"] = False
                 raise UpdateConflict("downgrade_refused", "Candidate version is older; use --allow-downgrade to proceed")
-            if apply and not is_canonical_upstream(source_repo) and not confirm_alternate_upstream:
-                result["update_status"] = "confirmation_required"
-                raise UpdateConflict("alternate_upstream_confirmation_required", "Alternate upstream requires explicit confirmation")
-
+            if apply and not canonical_upstream and validated_expected != resolved_commit.lower():
+                raise UpdateConflict(
+                    "expected_commit_mismatch",
+                    "Alternate-upstream ref no longer resolves to the reviewed commit",
+                )
+            if confirm_alternate_upstream:
+                result["confirmation_required"] = False
+            checkout_state = None
             if details["update_strategy"] == "git_checkout":
-                state = _checkout_state(details, source_repo, ref, checkout, resolved_commit)
-                result["checkout"] = {"branch": state["branch"], "current_commit": state["current_commit"]}
-                if state["current_commit"] == resolved_commit:
-                    result["success"] = True
-                    result["update_status"] = "up_to_date"
-                    return result
+                checkout_state = _checkout_state(details, source_repo, ref, checkout, resolved_commit)
+                result["checkout"] = {
+                    "branch": checkout_state["branch"],
+                    "current_commit": checkout_state["current_commit"],
+                }
+
+            if not result["skill_content_changed"]:
+                result["success"] = True
+                result["update_status"] = "up_to_date"
+                result["next_agent_action"] = "refresh_loaded_skill"
+                return result
+
+            if checkout_state is not None:
+                if checkout_state["current_commit"] == resolved_commit:
+                    result["automatic_update_allowed"] = False
+                    result["next_agent_action"] = "resolve_checkout_content_mismatch"
+                    raise UpdateConflict(
+                        "checkout_content_mismatch",
+                        "Git checkout skill content differs from its current source commit",
+                    )
                 if apply:
                     root = details["git_root"]
                     assert isinstance(root, Path)
@@ -453,6 +680,12 @@ def update_installation(
                     if fetched != resolved_commit:
                         raise UpdateConflict("source_changed", "Source ref changed between inspection and apply")
                     _run_git("-c", "core.hooksPath=/dev/null", "merge", "--ff-only", "FETCH_HEAD", cwd=root)
+                    post_update_diff = diff_summary(current, candidate)
+                    if any(post_update_diff["counts"].values()):
+                        raise UpdateConflict(
+                            "checkout_post_update_mismatch",
+                            "Updated Git checkout does not match the validated candidate tree",
+                        )
             elif apply:
                 selected_backup = backup_dir or current.parent / ".engineering-workflow-backups"
                 backup = _replace_copied_installation(
@@ -465,11 +698,26 @@ def update_installation(
 
             result["success"] = True
             result["update_status"] = "updated" if apply else "update_available"
-            result["restart_or_next_turn_required"] = bool(apply)
+            result["next_agent_action"] = "refresh_loaded_skill" if apply else "update_installed_skill"
             return result
     except UpdateConflict as exc:
+        result["automatic_update_allowed"] = False
+        result["next_agent_action"] = {
+            "alternate_upstream_confirmation_required": "request_alternate_upstream_confirmation",
+            "downgrade_refused": "request_downgrade_permission",
+            "dirty_checkout": "resolve_dirty_checkout",
+            "checkout_hidden_drift": "resolve_checkout_hidden_drift",
+            "remote_mismatch": "resolve_source_mismatch",
+            "checkout_content_mismatch": "resolve_checkout_content_mismatch",
+            "expected_commit_required": "rerun_check_and_bind_expected_commit",
+            "expected_commit_mismatch": "rerun_check_and_review_changed_commit",
+        }.get(exc.code, "report_update_failure")
         if result["update_status"] != "confirmation_required":
             result["update_status"] = exc.code
+        if exc.backup_path is not None:
+            result["backup_path"] = str(exc.backup_path)
+        if exc.recovery_path is not None:
+            result["recovery_path"] = str(exc.recovery_path)
         result["errors"].append({"code": exc.code, "message": str(exc)})
         return result
 
@@ -486,6 +734,7 @@ def main() -> int:
     parser.add_argument("--allow-downgrade", action="store_true")
     parser.add_argument("--backup-dir")
     parser.add_argument("--confirm-alternate-upstream", action="store_true")
+    parser.add_argument("--expected-commit")
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args()
 
@@ -498,6 +747,7 @@ def main() -> int:
         allow_downgrade=args.allow_downgrade,
         backup_dir=Path(args.backup_dir) if args.backup_dir else None,
         confirm_alternate_upstream=args.confirm_alternate_upstream,
+        expected_commit=args.expected_commit,
     )
     if args.format == "json":
         print(json.dumps(result, indent=2, sort_keys=True))

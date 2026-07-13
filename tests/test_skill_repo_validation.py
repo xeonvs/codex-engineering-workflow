@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,20 +14,29 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.5.0"
+CURRENT_VERSION = "0.5.1"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
     def _copy_repo_subset(self, target: Path) -> None:
         shutil.copy2(REPO_ROOT / "README.md", target / "README.md")
         shutil.copy2(REPO_ROOT / "LICENSE", target / "LICENSE")
+        if (REPO_ROOT / "PLANS.md").exists():
+            shutil.copy2(REPO_ROOT / "PLANS.md", target / "PLANS.md")
         shutil.copytree(REPO_ROOT / ".github", target / ".github")
-        shutil.copytree(REPO_ROOT / "skill", target / "skill")
+        shutil.copytree(
+            REPO_ROOT / "skill",
+            target / "skill",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
 
-    def test_current_repo_layout_passes(self):
-        result = validate_skill_repo.validate_skill_repo(REPO_ROOT)
-        self.assertTrue(result["success"], result)
-        self.assertEqual(result["skill_version"], CURRENT_VERSION)
+    def test_current_repo_layout_passes_in_clean_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            result = validate_skill_repo.validate_skill_repo(root)
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["skill_version"], CURRENT_VERSION)
 
     def test_forbidden_cache_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -35,6 +48,30 @@ class SkillRepoValidationTests(unittest.TestCase):
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("Forbidden cache path" in item for item in result["errors"]))
+
+    def test_cli_does_not_create_cache_without_bytecode_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            script = root / "skill" / "engineering-workflow" / "scripts" / "validate_skill_repo.py"
+            env = os.environ.copy()
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
+            env.pop("PYTHONPYCACHEPREFIX", None)
+
+            completed = subprocess.run(
+                [sys.executable, str(script), "--repo-root", str(root)],
+                cwd=root,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            payload = json.loads(completed.stdout)
+            self.assertEqual(completed.returncode, 0, completed.stderr or payload)
+            self.assertTrue(payload["success"], payload)
+            self.assertEqual(list(root.rglob("__pycache__")), [])
+            self.assertEqual(list(root.rglob("*.pyc")), [])
 
     def test_root_plans_workstation_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,6 +208,32 @@ class SkillRepoValidationTests(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertTrue(any("Refresh Loaded Skill" in item for item in result["errors"]))
 
+    def test_disabled_implicit_invocation_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            path = root / "skill" / "engineering-workflow" / "agents" / "openai.yaml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "allow_implicit_invocation: true",
+                    "allow_implicit_invocation: false",
+                ),
+                encoding="utf-8",
+            )
+            result = validate_skill_repo.validate_skill_repo(root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("implicit invocation" in item for item in result["errors"]))
+
+    def test_missing_prompt_upgrade_backend_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            path = root / "README.md"
+            path.write_text(path.read_text(encoding="utf-8").replace("--prompt", "--plan", 1), encoding="utf-8")
+            result = validate_skill_repo.validate_skill_repo(root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("prompt-owned target-upgrade" in item for item in result["errors"]))
+
     def test_invalid_optional_agent_toml_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -180,6 +243,50 @@ class SkillRepoValidationTests(unittest.TestCase):
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("Parse failure" in item for item in result["errors"]))
+
+    def test_unterminated_yaml_scalar_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            path = root / "skill" / "engineering-workflow" / "agents" / "openai.yaml"
+            path.write_text('interface:\n  display_name: "unterminated\n', encoding="utf-8")
+            result = validate_skill_repo.validate_skill_repo(root)
+            self.assertFalse(result["success"])
+            self.assertTrue(any("Parse failure" in item and "openai.yaml" in item for item in result["errors"]))
+
+    @unittest.skipUnless(os.name == "posix", "non-UTF-8 Git paths require POSIX byte paths")
+    def test_non_utf8_tracked_path_does_not_crash_public_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            raw_root = os.fsencode(root)
+            raw_name = b"non-utf8-\xff.txt"
+            try:
+                descriptor = os.open(raw_root + b"/" + raw_name, os.O_WRONLY | os.O_CREAT, 0o600)
+            except OSError as exc:
+                self.skipTest(f"filesystem rejects non-UTF-8 names: {exc.errno}")
+            try:
+                os.write(descriptor, b"plain text\n")
+            finally:
+                os.close(descriptor)
+            subprocess.run([b"git", b"-C", raw_root, b"add", b"--", raw_name], check=True)
+
+            result = validate_skill_repo.validate_skill_repo(root)
+
+            self.assertTrue(result["success"], result)
+
+    def test_ci_revalidates_after_tests_with_bytecode_disabled(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        command = "python skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root ."
+        first = workflow.find(command)
+        tests = workflow.find("python -m unittest discover -s tests -v")
+        second = workflow.find(command, first + 1)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', workflow)
+        self.assertGreater(first, -1)
+        self.assertGreater(tests, first)
+        self.assertGreater(second, tests)
 
     def test_validator_does_not_pin_long_contract_prose(self):
         source = (REPO_ROOT / "skill" / "engineering-workflow" / "scripts" / "validate_skill_repo.py").read_text(encoding="utf-8")

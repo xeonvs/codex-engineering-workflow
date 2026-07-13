@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from test_support import load_script_module
 
@@ -22,6 +25,25 @@ class ValidationTests(unittest.TestCase):
         for command in ("git status --short", "git diff", "git diff --check", "git ls-files"):
             with self.subTest(command=command):
                 self.assertEqual(common.classify_command_safety(command), "read_only_safe")
+
+    def test_git_helper_execution_options_are_live_only(self):
+        commands = (
+            "git grep --open-files-in-pager=malicious pattern",
+            "git grep -Omalicious pattern",
+            "git diff --ext-diff",
+            "git show --textconv HEAD:file.txt",
+            "git --paginate status",
+            "git -c core.pager=malicious diff",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(common.classify_command_safety(command), "live_only")
+
+    def test_find_output_actions_are_live_only(self):
+        for action in ("-fprint", "-fprint0", "-fprintf", "-fls"):
+            command = f"find . {action} output.txt"
+            with self.subTest(command=command):
+                self.assertEqual(common.classify_command_safety(command), "live_only")
 
     def test_repo_authored_and_package_commands_are_copy_only(self):
         for command in (
@@ -72,6 +94,31 @@ class ValidationTests(unittest.TestCase):
         )
         self.assertTrue(result["success"], result)
         self.assertFalse(any(path.name == "__pycache__" for path in source.rglob("*")))
+
+    def test_exact_compileall_uses_isolated_stdlib_module_without_os_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "repo"
+            source.mkdir()
+            outside = base / "outside.txt"
+            (source / "compileall.py").write_text(
+                "from pathlib import Path\n" + f"Path({str(outside)!r}).write_text('unexpected')\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(common, "_network_guard_prefix", return_value=None):
+                results = common.run_in_disposable_copy(source, ["python -m compileall ."])
+            self.assertEqual(results[0]["status"], "passed", results)
+            self.assertFalse(outside.exists())
+
+    def test_altered_compileall_is_not_exempt_without_os_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "repo"
+            (source / "src").mkdir(parents=True)
+            (source / "src" / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            with mock.patch.object(common, "_network_guard_prefix", return_value=None):
+                results = common.run_in_disposable_copy(source, ["python -m compileall ./src"])
+            self.assertEqual(results[0]["status"], "rejected")
+            self.assertIn("network isolation", results[0]["reason"])
 
     def test_network_capable_package_command_is_rejected_in_copy(self):
         result = validate_target_repo.validate_repo(
@@ -127,6 +174,21 @@ class ValidationTests(unittest.TestCase):
             )
             results = common.run_in_disposable_copy(source, ["python network_probe.py"])
             self.assertNotEqual(results[0]["status"], "passed")
+
+    def test_validation_results_never_echo_secret_bearing_commands(self):
+        marker = "SYNTHETIC_" + "COMMAND_SECRET_90123"
+        check_command = "rm -- " + marker
+        run_command = "python -c " + repr("print(" + marker + ")")
+        result = validate_target_repo.validate_repo(
+            FIXTURES / "minimal_git_repo",
+            mode="copy",
+            check_commands=[check_command],
+            run_commands=[run_command],
+        )
+        serialized = json.dumps(result, sort_keys=True)
+        self.assertNotIn(marker, serialized)
+        self.assertIn("command_fingerprint", serialized)
+        self.assertIn("validation-command-", serialized)
 
     def test_validation_warns_on_prompt_injection_signals(self):
         result = validate_target_repo.validate_repo(FIXTURES / "suspicious_repo", mode="read-only")

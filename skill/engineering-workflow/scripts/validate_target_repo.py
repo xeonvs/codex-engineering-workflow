@@ -12,6 +12,7 @@ from common import (
     find_placeholder_issues,
     find_stale_completed_state,
     print_json,
+    public_command_descriptor,
     run_in_disposable_copy,
     validate_plan_schema,
 )
@@ -28,12 +29,14 @@ def validate_repo(
     errors: list[str] = []
     warnings: list[str] = []
 
-    for command in check_commands or []:
+    for index, command in enumerate(check_commands or [], start=1):
         safety = classify_command_safety(command)
+        descriptor = public_command_descriptor(command, index)
+        label = descriptor["command"]
         if mode == "read-only" and safety != "read_only_safe":
-            errors.append(f"Command not allowed in read-only mode: {command} ({safety})")
+            errors.append(f"Command not allowed in read-only mode: {label} ({safety})")
         elif mode == "copy" and safety == "live_only":
-            errors.append(f"Command not allowed in copy mode: {command} ({safety})")
+            errors.append(f"Command not allowed in copy mode: {label} ({safety})")
 
     disposable_results: list[dict] = []
     if run_commands:

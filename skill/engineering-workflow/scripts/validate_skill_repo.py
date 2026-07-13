@@ -6,12 +6,20 @@ import ast
 import json
 import os
 import re
-import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Iterable
 
-from common import IGNORED_DIRS, find_stale_completed_state, scan_privacy_text, validate_plan_schema
+sys.dont_write_bytecode = True
+
+from common import (  # noqa: E402
+    IGNORED_DIRS,
+    find_stale_completed_state,
+    iter_public_text_files,
+    scan_privacy_text,
+    validate_plan_schema,
+)
 
 
 REQUIRED_PATHS = (
@@ -91,7 +99,9 @@ CANONICAL_OWNER_MARKERS = {
     "## Full Active Plan Schema": "skill/engineering-workflow/references/planning_and_backlog.md",
     "## Deterministic Route": "skill/engineering-workflow/references/agent_orchestration.md",
     "## Capability Mapping": "skill/engineering-workflow/references/model_profiles.md",
+    "## Refresh Loaded Skill Decision": "skill/engineering-workflow/references/skill_update.md",
     "## Installation Types": "skill/engineering-workflow/references/skill_update.md",
+    "## Prompt Invocation": "skill/engineering-workflow/references/target_workflow_upgrade.md",
     "## Migration Report": "skill/engineering-workflow/references/target_workflow_upgrade.md",
     "## Token-Aware Classification": "skill/engineering-workflow/references/validation_safety.md",
     "## Public Scan Scope": "skill/engineering-workflow/references/privacy_and_sanitization.md",
@@ -120,26 +130,10 @@ def _extract_frontmatter(text: str) -> dict[str, str]:
 
 
 def _candidate_paths(repo_root: Path) -> list[Path]:
-    result = subprocess.run(
-        ["git", "-C", str(repo_root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        capture_output=True,
-        check=False,
+    return sorted(
+        iter_public_text_files(repo_root),
+        key=lambda path: os.fsencode(path.relative_to(repo_root)),
     )
-    if result.returncode == 0 and result.stdout:
-        paths = [repo_root / raw.decode("utf-8") for raw in result.stdout.split(b"\0") if raw]
-    else:
-        paths = [path for path in repo_root.rglob("*") if path.is_file()]
-    unique: dict[str, Path] = {}
-    for path in paths:
-        try:
-            rel = path.relative_to(repo_root)
-        except ValueError:
-            continue
-        if any(part in IGNORED_DIRS for part in rel.parts):
-            continue
-        if path.is_symlink() or path.is_file():
-            unique[rel.as_posix()] = path
-    return [unique[name] for name in sorted(unique)]
 
 
 def _read_public_text(path: Path) -> str | None:
@@ -198,6 +192,39 @@ def _scan_public_privacy(repo_root: Path) -> list[str]:
 
 def _validate_yaml_shape(text: str) -> None:
     """Parse the repository's intentionally small YAML subset without third-party dependencies."""
+    def validate_scalar(value: str, number: int) -> None:
+        stack: list[str] = []
+        quote: str | None = None
+        index = 0
+        pairs = {")": "(", "]": "[", "}": "{"}
+        while index < len(value):
+            char = value[index]
+            if quote is not None:
+                if quote == '"' and char == "\\":
+                    index += 2
+                    continue
+                if quote == "'" and char == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                    index += 2
+                    continue
+                if char == quote:
+                    quote = None
+                index += 1
+                continue
+            if char == "#":
+                break
+            if char in {"'", '"'}:
+                quote = char
+            elif char in "([{":
+                stack.append(char)
+            elif char in ")]}":
+                if not stack or stack.pop() != pairs[char]:
+                    raise ValueError(f"unbalanced collection at line {number}")
+            index += 1
+        if quote is not None:
+            raise ValueError(f"unterminated quoted scalar at line {number}")
+        if stack:
+            raise ValueError(f"unterminated collection at line {number}")
+
     previous_indent = 0
     for number, raw in enumerate(text.splitlines(), start=1):
         if not raw.strip() or raw.lstrip().startswith("#") or raw.strip() in {"---", "..."}:
@@ -212,6 +239,9 @@ def _validate_yaml_shape(text: str) -> None:
         if body and not re.match(r"^(?:[^:#][^:]*|['\"][^'\"]+['\"]):(?:\s.*)?$", body):
             if not stripped.startswith("-"):
                 raise ValueError(f"expected mapping or sequence at line {number}")
+        scalar = body.split(":", 1)[1].strip() if ":" in body else body
+        if scalar not in {"|", ">", "|-", ">-", "|+", ">+"}:
+            validate_scalar(scalar, number)
         if indent > previous_indent + 8:
             raise ValueError(f"unexpected indentation jump at line {number}")
         previous_indent = indent
@@ -278,6 +308,11 @@ def _validate_readme(repo_root: Path, version: str | None) -> list[str]:
     for mode in ("refresh_loaded_skill", "update_installed_skill", "upgrade_target_workflow"):
         if mode not in text:
             issues.append(f"README.md is missing lifecycle or migration mode: {mode}")
+    for field in ("recommended_action", "automatic_update_allowed", "confirmation_required"):
+        if field not in text:
+            issues.append(f"README.md is missing refresh orchestration field: {field}")
+    if "--prompt" not in text:
+        issues.append("README.md is missing prompt-owned target-upgrade orchestration")
     if version and f"--target-version {version}" not in text:
         issues.append("README.md target-upgrade prompt does not use the current version")
     return issues
@@ -401,8 +436,11 @@ def _validate_openai_yaml(repo_root: Path) -> list[str]:
     issues = []
     if "$engineering-workflow" not in text:
         issues.append("agents/openai.yaml default prompt does not mention $engineering-workflow")
-    if "allow_implicit_invocation: false" not in text:
-        issues.append("agents/openai.yaml must keep implicit invocation disabled")
+    if "Upgrade A Target Workflow" not in text:
+        issues.append("agents/openai.yaml default prompt does not route target workflow upgrades")
+    implicit = re.search(r"(?m)^\s*allow_implicit_invocation:\s*(true|false)\s*$", text)
+    if not implicit or implicit.group(1) != "true":
+        issues.append("agents/openai.yaml must allow prompt-driven implicit invocation")
     match = re.search(r'(?m)^\s*short_description:\s*["\'](?P<value>.*?)["\']\s*$', text)
     if not match or not 25 <= len(match.group("value")) <= 64:
         issues.append("agents/openai.yaml short_description must be 25-64 characters")

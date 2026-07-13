@@ -1,21 +1,36 @@
 # Target Workflow Upgrade
 
-Use this canonical reference for `upgrade_target_workflow`, which migrates the workflow layer of an existing target repository. It is separate from refreshing or updating the installed skill.
+Use this canonical reference for `upgrade_target_workflow`, which migrates the workflow layer of an existing target repository. The natural-language prompt `Upgrade A Target Workflow` tells the agent to execute this workflow itself. It remains separate from refreshing or updating the installed skill.
 
 ## Contents
 
-1. CLI Contract
-2. Planning Gate
-3. Discovery
-4. Ownership Classification
-5. Conflict Analysis
-6. Migration Report
-7. Questions
-8. Mutation Boundaries
-9. Apply Sequence
-10. Codex Configuration
-11. Workflow State Manifest
-12. Validation And Rollback
+1. Prompt Invocation
+2. CLI Contract
+3. Planning Gate
+4. Discovery
+5. Ownership Classification
+6. Conflict Analysis
+7. Migration Report
+8. Questions
+9. Mutation Boundaries
+10. Apply Sequence
+11. Codex Configuration
+12. Workflow State Manifest
+13. Validation And Rollback
+
+## Prompt Invocation
+
+Treat `Upgrade A Target Workflow` plus a target repository as an authorized repo-changing prompt, not as a request for CLI instructions.
+
+1. Resolve the target path and requested version from context; default to the installed skill version.
+2. Invoke `scripts/upgrade_target_workflow.py --prompt` yourself.
+3. Prompt mode builds and reviews the read-only migration report first.
+4. If ownership, conflicts, privacy, and approvals are resolved, it proceeds through guarded apply and validation automatically.
+5. If the result returns `agent_action: ask_targeted_question`, ask only `question_to_ask`; keep any later questions deferred and do not write target files.
+6. If it returns `privacy_review_required`, report the finding categories and paths without values and make no target writes.
+7. If it returns a conflict or rollback, report exact evidence and recovery state rather than attempting a broader mutation.
+
+The user may explicitly request report-only behavior; then invoke `--plan`. Runtime agent configuration remains opt-in through the user's prompt and `--include-agent-config`.
 
 ## CLI Contract
 
@@ -24,11 +39,12 @@ Use this canonical reference for `upgrade_target_workflow`, which migrates the w
 - `--repo`
 - `--plan`
 - `--apply`
+- `--prompt`
 - `--target-version`
 - `--include-agent-config`
 - `--format json`
 
-`--plan` is read-only. `--apply` is allowed only after audit and migration-plan generation.
+`--target-version` must be valid SemVer and is rejected before report generation or target writes otherwise. `--plan` is read-only. `--apply` is allowed only after audit and migration-plan generation. `--prompt` is the agent-owned report-then-apply route for an authorized natural-language upgrade request and stops before writes whenever a question, privacy finding, or conflict remains.
 
 ## Planning Gate
 
@@ -110,13 +126,17 @@ Do not replace a shared file wholesale. Change only workflow-owned files, explic
 
 ## Apply Sequence
 
-1. Re-run the read-only audit and refuse unresolved blocking conflicts.
-2. Materialize or update the full target plan as the first write.
-3. Create missing canonical workflow files from templates.
-4. Narrowly update only managed content or explicit links in shared files.
-5. Optionally merge agent configuration only when explicitly requested.
-6. Write the state manifest with relative paths.
-7. Validate and record exact changes in the target plan.
+1. Capture the target-root filesystem identity, re-run the read-only audit, and refuse unresolved blocking conflicts or privacy findings.
+2. Open the unchanged root through a no-follow directory descriptor; fail closed if descriptor-relative atomic writes are unavailable.
+3. Materialize or update the full target plan as the first write.
+4. Create missing canonical workflow files from templates.
+5. Narrowly update only managed content or explicit links in shared files.
+6. Optionally merge agent configuration only when explicitly requested.
+7. Write the state manifest with relative paths.
+8. Validate and record exact changes in the target plan.
+9. Re-run the public privacy scan immediately before success.
+
+Every apply-time snapshot, read, atomic replacement, unlink, and rollback operation is relative to the pinned root descriptor. Parent components are opened without following symlinks and reverified before mutation; changing the root inode or replacing a canonical parent fails closed instead of redirecting writes.
 
 ## Codex Configuration
 
@@ -157,7 +177,8 @@ Use repository-relative paths. Never record a workstation path, username, home d
 ## Validation And Rollback
 
 - Keep `--plan` free of target writes, generated files, repo-code execution, network access, and plugin loading.
+- Treat the fresh apply-time report as authoritative: any privacy finding returns `privacy_review_required` before the first write, even when an earlier prompt report was clean.
 - Validate YAML/TOML structure, plan schema, relative manifest paths, ownership boundaries, config preservation, and absence of private paths.
 - Report created, changed, untouched, and refused files.
 - Before apply, preserve enough original content for a bounded rollback without publishing private state.
-- On failure, restore files changed by the migration and leave the target plan with the exact failure and recovery point.
+- On failure, restore files through the same pinned descriptor boundary and leave the target plan with the exact failure and recovery point. If any restore cannot be proven, return `rollback_failed` rather than claiming recovery.

@@ -11,20 +11,16 @@ from pathlib import Path
 from common import iter_public_text_files, scan_privacy_text
 
 
-EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-
-
 def scan_text(text: str, deny_terms: list[str] | None = None) -> list[dict[str, int | str]]:
     """Return privacy categories without echoing candidate secret values."""
     issues = list(scan_privacy_text(text))
-    for match in EMAIL_PATTERN.finditer(text):
-        issues.append({"type": "email", "line": text.count("\n", 0, match.start()) + 1})
     for term in deny_terms or []:
         if not term:
             continue
-        match = re.search(re.escape(term), text, re.IGNORECASE)
-        if match:
-            issues.append({"type": "deny_term", "line": text.count("\n", 0, match.start()) + 1})
+        for line_number, line in enumerate(text.splitlines() or [""], start=1):
+            if re.search(re.escape(term), line, re.IGNORECASE):
+                issues.append({"type": "deny_term", "line": line_number})
+                break
     return issues
 
 

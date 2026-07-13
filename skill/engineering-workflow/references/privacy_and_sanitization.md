@@ -4,9 +4,9 @@ Use this canonical reference for public-tree, output, and history sanitization.
 
 ## Public Scan Scope
 
-Scan every tracked public text file, including root plans, README, workflow files, templates, scripts, tests, fixtures, and CI configuration.
+Scan every tracked public text file, including tracked paths under ignored/cache/vendor directory names, plus non-ignored untracked public text. Root plans, README, workflow files, templates, scripts, tests, fixtures, and CI configuration are all in scope.
 
-Exclude Git object storage, binary files, generated caches, build output, and vendored dependency trees that are not intentionally part of the public artifact.
+Exclude Git object storage, binary files, and ignored untracked caches/build/vendor output. A tracked file is intentionally part of the public artifact and cannot evade scanning because one of its parent directory names is normally excluded.
 
 ## Sensitive Categories
 
@@ -16,13 +16,15 @@ Detect and remove or generalize:
 - local file URL schemes
 - private SSH key locations and private key material
 - internal hostnames
-- credential-like assignments
+- credential-like and environment-style assignments, including underscore-delimited key names
 - known token and API-key shapes
-- passwords and bearer material
+- passwords, authorization bearer material, and email addresses
 - repository URLs containing credentials or using unintended private SSH endpoints
 - private names, customers, codenames, emails, and user-specific identifiers when they are not intentionally public
 
 Do not echo a candidate secret value in logs or reports. Return only its category, relative file, line number, commit identifier when applicable, and remediation status.
+
+Use one shared bounded pattern catalog for the repository validator and output sanitizer. Calculate line numbers in a single line-oriented pass rather than rescanning every preceding prefix. Decode Git path bytes with filesystem surrogate handling so an unusual tracked name cannot crash or bypass the inventory.
 
 ## Safe Reuse
 

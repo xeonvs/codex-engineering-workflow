@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -179,6 +180,13 @@ PRIVACY_PATTERNS = {
         r"\b(api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd)\b\s*[:=]\s*['\"]?[^\s'\";,]{8,}",
         re.IGNORECASE,
     ),
+    "environment_secret_assignment": re.compile(
+        r"\b(?:[A-Z][A-Z0-9]*_)*(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|SECRET_ACCESS_KEY)\b"
+        r"\s*[:=]\s*['\"]?[^\s'\";,]{8,}",
+        re.IGNORECASE,
+    ),
+    "bearer_token": re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
+    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     "known_token_prefix": re.compile(
         r"(?:ghp" + r"_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk" + r"-[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})"
     ),
@@ -231,24 +239,37 @@ def _is_text_like(path: Path) -> bool:
 
 def iter_public_text_files(root: Path) -> Iterable[Path]:
     """Yield tracked public text files, or all non-ignored text files without Git."""
-    candidates: list[Path] = []
+    candidates: list[tuple[Path, bool]] = []
+    git_inventory_succeeded = False
     if (root / ".git").exists():
-        result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "-z"],
             check=False,
             capture_output=True,
         )
-        if result.returncode == 0:
-            candidates = [root / item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
-    if not candidates:
-        candidates = list(_iter_relevant_files(root))
+        untracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"],
+            check=False,
+            capture_output=True,
+        )
+        if tracked.returncode == 0 and untracked.returncode == 0:
+            git_inventory_succeeded = True
+            candidates.extend((root / os.fsdecode(item), True) for item in tracked.stdout.split(b"\0") if item)
+            candidates.extend((root / os.fsdecode(item), False) for item in untracked.stdout.split(b"\0") if item)
+    if not git_inventory_succeeded:
+        candidates = [(path, False) for path in _iter_relevant_files(root)]
 
-    for path in candidates:
+    seen: set[str] = set()
+    for path, tracked_path in candidates:
         try:
             rel = path.relative_to(root)
         except ValueError:
             continue
-        if any(part in IGNORED_DIRS for part in rel.parts):
+        relative_name = rel.as_posix()
+        if relative_name in seen:
+            continue
+        seen.add(relative_name)
+        if not tracked_path and any(part in IGNORED_DIRS for part in rel.parts):
             continue
         if (path.is_symlink() or path.is_file()) and _is_text_like(path):
             yield path
@@ -257,10 +278,11 @@ def iter_public_text_files(root: Path) -> Iterable[Path]:
 def scan_privacy_text(text: str) -> list[dict[str, int | str]]:
     """Return categories and line numbers without echoing sensitive values."""
     issues: list[dict[str, int | str]] = []
+    lines = text.splitlines() or [""]
     for name, pattern in PRIVACY_PATTERNS.items():
-        for match in pattern.finditer(text):
-            line = text.count("\n", 0, match.start()) + 1
-            issues.append({"type": name, "line": line})
+        for line_number, line in enumerate(lines, start=1):
+            for _match in pattern.finditer(line):
+                issues.append({"type": name, "line": line_number})
     return issues
 
 
@@ -534,7 +556,17 @@ _MUTATING_GIT_SUBCOMMANDS = {
 
 
 def _has_unsafe_find_action(tokens: list[str]) -> bool:
-    unsafe = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"}
+    unsafe = {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-fls",
+    }
     return any(token in unsafe for token in tokens[1:])
 
 
@@ -561,7 +593,13 @@ def classify_command_safety(command: str) -> str:
             return "live_only"
         if subcommand not in _SAFE_GIT_SUBCOMMANDS:
             return "live_only"
-        if any(token.startswith(("--output", "--exec-path")) for token in tokens[2:]):
+        unsafe_git_options = ("--output", "--exec-path", "--open-files-in-pager")
+        if any(
+            token in {"--ext-diff", "--textconv", "--paginate", "-p"}
+            or token.startswith("-O")
+            or token.startswith(unsafe_git_options)
+            for token in tokens[2:]
+        ):
             return "live_only"
         return "read_only_safe"
 
@@ -654,8 +692,17 @@ def _network_guard_prefix(temp_root: Path) -> list[str] | None:
 
 
 def _intrinsically_offline(tokens: list[str]) -> bool:
-    executable = Path(tokens[0]).name.lower()
-    return executable in {"python", "python3"} and tokens[1:3] == ["-m", "compileall"]
+    return tokens in (["python", "-m", "compileall", "."], ["python3", "-m", "compileall", "."])
+
+
+def public_command_descriptor(command: str, index: int) -> dict[str, int | str]:
+    """Return a stable opaque command identity without exposing command text."""
+    fingerprint = hashlib.sha256(command.encode("utf-8", errors="surrogatepass")).hexdigest()
+    return {
+        "command": f"validation-command-{index:03d}",
+        "command_index": index,
+        "command_fingerprint": f"sha256:{fingerprint}",
+    }
 
 
 def run_in_disposable_copy(repo: Path, commands: list[str], timeout_seconds: int = 300) -> list[dict]:
@@ -674,50 +721,56 @@ def run_in_disposable_copy(repo: Path, commands: list[str], timeout_seconds: int
         except OSError:
             return [
                 {
-                    "command": command,
+                    **public_command_descriptor(command, index),
                     "status": "rejected",
                     "reason": "repository could not be copied safely",
                 }
-                for command in commands
+                for index, command in enumerate(commands, start=1)
             ]
         env = _minimal_disposable_env(temp_root)
         unsafe_links = _external_symlinks(copy_root)
         if unsafe_links:
-            for command in commands:
+            for index, command in enumerate(commands, start=1):
                 results.append(
                     {
-                        "command": command,
+                        **public_command_descriptor(command, index),
                         "status": "rejected",
                         "reason": f"disposable copy contains {len(unsafe_links)} external symlink(s)",
                     }
                 )
             return results
         network_guard = _network_guard_prefix(temp_root)
-        for command in commands:
+        for index, command in enumerate(commands, start=1):
+            descriptor = public_command_descriptor(command, index)
             safety = classify_command_safety(command)
             if safety != "copy_only_safe":
                 results.append(
-                    {"command": command, "status": "rejected", "reason": f"expected copy_only_safe, got {safety}"}
+                    {**descriptor, "status": "rejected", "reason": f"expected copy_only_safe, got {safety}"}
                 )
                 continue
             tokens = shlex.split(command)
             executable = Path(tokens[0]).name.lower()
             if executable in {"pip", "pip3", "npm", "npx", "pnpm", "yarn", "bun", "cargo", "go"}:
                 results.append(
-                    {"command": command, "status": "rejected", "reason": "network-capable package command requires an explicit offline wrapper"}
+                    {**descriptor, "status": "rejected", "reason": "network-capable package command requires an explicit offline wrapper"}
                 )
                 continue
-            if network_guard is None and not _intrinsically_offline(tokens):
+            isolated_compileall = _intrinsically_offline(tokens)
+            if network_guard is None and not isolated_compileall:
                 results.append(
                     {
-                        "command": command,
+                        **descriptor,
                         "status": "rejected",
                         "reason": "command requires OS network isolation or an explicit offline wrapper",
                     }
                 )
                 continue
             if executable in {"python", "python3"}:
-                tokens[0] = sys.executable
+                tokens = (
+                    [sys.executable, "-I", "-m", "compileall", "."]
+                    if isolated_compileall
+                    else [sys.executable, *tokens[1:]]
+                )
             execution_tokens = [*network_guard, *tokens] if network_guard else tokens
             try:
                 completed = subprocess.run(
@@ -730,11 +783,11 @@ def run_in_disposable_copy(repo: Path, commands: list[str], timeout_seconds: int
                     check=False,
                 )
             except subprocess.TimeoutExpired:
-                results.append({"command": command, "status": "timeout", "timeout_seconds": timeout_seconds})
+                results.append({**descriptor, "status": "timeout", "timeout_seconds": timeout_seconds})
                 continue
             results.append(
                 {
-                    "command": command,
+                    **descriptor,
                     "status": "passed" if completed.returncode == 0 else "failed",
                     "returncode": completed.returncode,
                     "network_policy": "os_sandbox_deny" if network_guard else "intrinsic_offline",
