@@ -2,270 +2,471 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import json
+import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
+from typing import Iterable
+
+from common import IGNORED_DIRS, find_stale_completed_state, scan_privacy_text, validate_plan_schema
 
 
-REQUIRED_PATHS = [
+REQUIRED_PATHS = (
     "README.md",
     "LICENSE",
+    ".github/workflows/ci.yml",
     "skill/engineering-workflow/SKILL.md",
     "skill/engineering-workflow/agents/openai.yaml",
+    "skill/engineering-workflow/scripts/common.py",
     "skill/engineering-workflow/scripts/repo_audit.py",
     "skill/engineering-workflow/scripts/plan_bootstrap.py",
     "skill/engineering-workflow/scripts/validate_target_repo.py",
+    "skill/engineering-workflow/scripts/validate_skill_repo.py",
     "skill/engineering-workflow/scripts/sanitize_output.py",
-    "skill/engineering-workflow/references/canonical_target.md",
+    "skill/engineering-workflow/scripts/update_installed_skill.py",
+    "skill/engineering-workflow/scripts/upgrade_target_workflow.py",
     "skill/engineering-workflow/references/planning_and_backlog.md",
+    "skill/engineering-workflow/references/agent_orchestration.md",
+    "skill/engineering-workflow/references/model_profiles.md",
+    "skill/engineering-workflow/references/skill_update.md",
+    "skill/engineering-workflow/references/target_workflow_upgrade.md",
+    "skill/engineering-workflow/references/validation_safety.md",
+    "skill/engineering-workflow/references/privacy_and_sanitization.md",
+    "skill/engineering-workflow/references/canonical_target.md",
     "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl",
-]
-
-PUBLIC_SCAN_PATHS = [
-    "README.md",
-    ".github/workflows/ci.yml",
-    "skill/engineering-workflow",
-]
-PUBLIC_TEXT_SUFFIXES = {".md", ".yaml", ".yml", ".tmpl", ".txt"}
-
-FORBIDDEN_PATH_PARTS = {"__pycache__"}
+    "skill/engineering-workflow/assets/templates/PLANS.md.tmpl",
+    "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl",
+    "skill/engineering-workflow/assets/templates/ENGINEERING_WORKFLOW_STATE.yaml.tmpl",
+    "skill/engineering-workflow/assets/agents/utility.toml.tmpl",
+    "skill/engineering-workflow/assets/agents/explorer.toml.tmpl",
+    "skill/engineering-workflow/assets/agents/reviewer.toml.tmpl",
+)
+FORBIDDEN_PATH_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo"}
-FORBIDDEN_TEXT_PATTERNS = {
-    "absolute_home_path": re.compile(r"(^|[^A-Za-z0-9_])(/home/[A-Za-z0-9._-]+/)"),
-    "windows_user_path": re.compile(r"[A-Za-z]:\\\\Users\\\\[A-Za-z0-9._ -]+\\\\"),
-    "internal_hostname": re.compile(r"\b[a-zA-Z0-9.-]+\.(internal|corp|local)\b"),
-    "credential_like_assignment": re.compile(
-        r"\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*['\"]?[A-Za-z0-9._-]{8,}",
-        re.IGNORECASE,
-    ),
-}
+SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+MODEL_SLUG_RE = re.compile(r"\bgpt-\d+(?:\.\d+)*(?:-[a-z0-9]+)*\b")
+FORBIDDEN_PRO_SLUG = "gpt-" + "5.6-" + "pro"
 
-STALE_SKILL_VERSIONS = {
-    ".".join(["0", "3", "0"]),
-    ".".join(["0", "3", "1"]),
-    ".".join(["0", "4", "0"]),
+SKILL_REQUIRED_HEADINGS = (
+    "## Runtime Invariants",
+    "## Route By Request",
+    "## Core Workflow",
+    "## Canonical References",
+    "## Scripts",
+)
+SKILL_REQUIRED_MARKERS = (
+    "audit_before_edit: required",
+    "plan_schema_version: 1",
+    "repo_change_plan: full_required",
+    "plan_mode_exit_materialization: required",
+    "direct_execution_materialization: required",
+    "shared_state_owner: root",
+)
+SKILL_REQUIRED_REFERENCES = (
+    "references/planning_and_backlog.md",
+    "references/agent_orchestration.md",
+    "references/model_profiles.md",
+    "references/skill_update.md",
+    "references/target_workflow_upgrade.md",
+    "references/validation_safety.md",
+    "references/privacy_and_sanitization.md",
+)
+README_REQUIRED_HEADINGS = (
+    "## Quick Start",
+    "## Installing The Skill",
+    "## Using The Skill In Codex",
+    "## Refresh Loaded Skill",
+    "## Update Installed Skill",
+    "## Upgrade A Target Workflow",
+    "## Operating Modes",
+    "## Planning And Backlog Lifecycle",
+    "## Example Workflows",
+    "## Validating",
+    "## Versioning And Updates",
+)
+CANONICAL_OWNER_MARKERS = {
+    "## Full Active Plan Schema": "skill/engineering-workflow/references/planning_and_backlog.md",
+    "## Deterministic Route": "skill/engineering-workflow/references/agent_orchestration.md",
+    "## Capability Mapping": "skill/engineering-workflow/references/model_profiles.md",
+    "## Installation Types": "skill/engineering-workflow/references/skill_update.md",
+    "## Migration Report": "skill/engineering-workflow/references/target_workflow_upgrade.md",
+    "## Token-Aware Classification": "skill/engineering-workflow/references/validation_safety.md",
+    "## Public Scan Scope": "skill/engineering-workflow/references/privacy_and_sanitization.md",
 }
-
-FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS = {
-    "legacy_compact_queue_contract": re.compile(r"compact checked\s+queue", re.IGNORECASE),
-    "legacy_small_task_compaction": re.compile(r"small bounded\s+tasks?", re.IGNORECASE),
-    "legacy_overengineering_prompt": re.compile(r"without over" + r"engineering", re.IGNORECASE),
-}
-
-REQUIRED_CONTRACT_SNIPPETS = {
-    "skill/engineering-workflow/SKILL.md": [
-        "use a full active plan while work is active, blocked, pending validation, or needs handoff",
-        "Record the user's full requested outcome, sources, constraints, decisions, validation, and resume point",
-        "After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, `docs/codex/TASKS_BACKLOG.md`, and related workflow docs before code changes",
-        "Do not leave stale \"next work\", resume, or milestone status text in completed sections",
-        "Before staging or committing, update `PLANS.md` to match the post-commit state",
-        "Conservative means preserving existing owners and avoiding unrelated expansion, not narrowing the user's requested outcome",
-    ],
-    "skill/engineering-workflow/references/planning_and_backlog.md": [
-        "Use a full active plan for every task that changes repository state",
-        "Do not compress active work into a single queue item or final-summary line",
-        "## Resume And Milestone Reconciliation",
-        "The next safe action must match the first unchecked active-plan queue item or the linked backlog item",
-        "Do not leave stale \"next work\", resume, or milestone status text in completed sections",
-        "## Pre-Commit Closure Gate",
-        "Do not commit completed work while its active plan still says `planned` or `in_progress`",
-        "Archive a backlog item under `docs/archive/backlog/YYYY-MM-DD-<slug>.md` only",
-        "Conservative planning means preserving existing owners and avoiding unrelated expansion",
-    ],
-    "skill/engineering-workflow/references/merge_policy.md": [
-        "Preserve the user's requested outcome; do not use `conservative_merge` as permission to reduce scope",
-    ],
-    "skill/engineering-workflow/assets/templates/PLANS.md.tmpl": [
-        "### Requested Scope",
-        "### Resume Point",
-        "### Reconciliation Check",
-        "### Pre-Commit Closure",
-        "Completed sections do not contain stale \"next work\", resume, or milestone status text",
-        "Compact or archive completed plan detail only after validation and handoff are recorded",
-    ],
-    "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl": [
-        "After context compaction, interruption, resume, or milestone closure, reconcile backlog status with `PLANS.md` before code changes",
-        "Do not leave stale next safe action or milestone status text in a `done` item",
-        "remove the backlog item by default",
-        "Archive only when future-useful rationale",
-    ],
-    "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl": [
-        "After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, backlog, validation state, and statuses before code changes",
-        "Before staging or committing, update active plans and promoted backlog items to their post-commit state",
-        "Do not narrow the user's requested scope because the task is large or inconvenient",
-    ],
-}
-
-SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def _extract_frontmatter(text: str) -> dict[str, str]:
-    match = re.match(r"^---\n(?P<body>.*?)\n---", text, re.DOTALL)
+    match = re.match(r"^---\n(?P<body>.*?)\n---(?:\n|$)", text, re.DOTALL)
     if not match:
         return {}
-
     values: dict[str, str] = {}
-    current_section = None
-    for raw_line in match.group("body").splitlines():
-        if not raw_line.strip():
+    section = ""
+    for raw in match.group("body").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
             continue
-        if not raw_line.startswith(" ") and ":" in raw_line:
-            key, value = raw_line.split(":", 1)
-            current_section = key.strip()
-            if value.strip():
-                values[current_section] = value.strip().strip("\"'")
+        indent = len(raw) - len(raw.lstrip())
+        if indent == 0 and raw.rstrip().endswith(":"):
+            section = raw.rstrip()[:-1].strip()
             continue
-        if current_section == "metadata" and raw_line.startswith("  ") and ":" in raw_line:
-            key, value = raw_line.strip().split(":", 1)
-            values[f"metadata.{key.strip()}"] = value.strip().strip("\"'")
+        if ":" not in raw:
+            continue
+        key, value = raw.strip().split(":", 1)
+        full_key = f"{section}.{key}" if indent and section else key
+        values[full_key] = value.strip().strip("\"'")
     return values
 
 
-def _iter_scan_files(repo_root: Path):
-    for rel_path in PUBLIC_SCAN_PATHS:
-        path = repo_root / rel_path
-        if not path.exists():
-            continue
-        if path.is_file():
-            if path.suffix.lower() in PUBLIC_TEXT_SUFFIXES:
-                yield path
-            continue
-        for child in path.rglob("*"):
-            if child.is_file() and child.suffix.lower() in PUBLIC_TEXT_SUFFIXES:
-                yield child
-
-
-def _check_for_forbidden_paths(repo_root: Path) -> list[str]:
-    candidate_paths: list[Path] = []
-    git_dir = repo_root / ".git"
-    if git_dir.exists():
+def _candidate_paths(repo_root: Path) -> list[Path]:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout:
+        paths = [repo_root / raw.decode("utf-8") for raw in result.stdout.split(b"\0") if raw]
+    else:
+        paths = [path for path in repo_root.rglob("*") if path.is_file()]
+    unique: dict[str, Path] = {}
+    for path in paths:
         try:
-            output = subprocess.run(
-                ["git", "-C", str(repo_root), "ls-files", "--cached", "--others", "--exclude-standard"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            candidate_paths = [repo_root / line for line in output.stdout.splitlines() if line.strip()]
-        except subprocess.CalledProcessError:
-            candidate_paths = []
-
-    if not candidate_paths:
-        candidate_paths = [path for path in repo_root.rglob("*") if path.is_file()]
-
-    issues = []
-    for path in candidate_paths:
-        rel_path = path.relative_to(repo_root)
-        if any(part in FORBIDDEN_PATH_PARTS for part in rel_path.parts):
-            issues.append(f"Forbidden cache path present: {rel_path}")
+            rel = path.relative_to(repo_root)
+        except ValueError:
             continue
-        if path.suffix in FORBIDDEN_SUFFIXES:
-            issues.append(f"Forbidden compiled artifact present: {rel_path}")
+        if any(part in IGNORED_DIRS for part in rel.parts):
+            continue
+        if path.is_symlink() or path.is_file():
+            unique[rel.as_posix()] = path
+    return [unique[name] for name in sorted(unique)]
+
+
+def _read_public_text(path: Path) -> str | None:
+    if path.is_symlink():
+        try:
+            return os.readlink(path)
+        except OSError:
+            return None
+    if any(parent.is_symlink() for parent in path.parents):
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _text_files(repo_root: Path) -> Iterable[tuple[Path, str]]:
+    for path in _candidate_paths(repo_root):
+        text = _read_public_text(path)
+        if text is not None:
+            yield path, text
+
+
+def _check_forbidden_paths(repo_root: Path) -> list[str]:
+    issues = []
+    excluded_non_public = IGNORED_DIRS - FORBIDDEN_PATH_PARTS
+    for path in repo_root.rglob("*"):
+        if not path.is_file() or ".git" in path.parts:
+            continue
+        rel = path.relative_to(repo_root)
+        if any(part in excluded_non_public for part in rel.parts):
+            continue
+        if any(part in FORBIDDEN_PATH_PARTS for part in rel.parts):
+            issues.append(f"Forbidden cache path present: {rel.as_posix()}")
+        elif path.suffix.lower() in FORBIDDEN_SUFFIXES:
+            issues.append(f"Forbidden compiled artifact present: {rel.as_posix()}")
     return issues
 
 
-def _scan_public_text(repo_root: Path) -> list[str]:
+def _scan_public_privacy(repo_root: Path) -> list[str]:
     issues = []
-    for path in _iter_scan_files(repo_root):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        rel_path = path.relative_to(repo_root)
-        for stale_version in STALE_SKILL_VERSIONS:
-            if stale_version in text:
-                issues.append(f"Stale skill version reference found in {rel_path}")
-        for name, pattern in FORBIDDEN_TEXT_PATTERNS.items():
-            if pattern.search(text):
-                issues.append(f"Forbidden {name} found in {rel_path}")
-        for name, pattern in FORBIDDEN_WORKFLOW_LANGUAGE_PATTERNS.items():
-            if pattern.search(text):
-                issues.append(f"Forbidden {name} found in {rel_path}")
+    for path, text in _text_files(repo_root):
+        rel = path.relative_to(repo_root).as_posix()
+        for finding in scan_privacy_text(text):
+            issues.append(f"Privacy finding {finding['type']} in {rel}:{finding['line']}")
+        if FORBIDDEN_PRO_SLUG in text:
+            issues.append(f"Forbidden invented pro model slug in {rel}")
     return issues
 
 
-def _check_required_contract_text(repo_root: Path) -> list[str]:
+def _validate_yaml_shape(text: str) -> None:
+    """Parse the repository's intentionally small YAML subset without third-party dependencies."""
+    previous_indent = 0
+    for number, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip() or raw.lstrip().startswith("#") or raw.strip() in {"---", "..."}:
+            continue
+        if "\t" in raw[: len(raw) - len(raw.lstrip())]:
+            raise ValueError(f"tab indentation at line {number}")
+        indent = len(raw) - len(raw.lstrip(" "))
+        stripped = raw.strip()
+        body = stripped[2:].strip() if stripped.startswith("- ") else stripped
+        if stripped == "-":
+            body = ""
+        if body and not re.match(r"^(?:[^:#][^:]*|['\"][^'\"]+['\"]):(?:\s.*)?$", body):
+            if not stripped.startswith("-"):
+                raise ValueError(f"expected mapping or sequence at line {number}")
+        if indent > previous_indent + 8:
+            raise ValueError(f"unexpected indentation jump at line {number}")
+        previous_indent = indent
+
+
+def _validate_parseable_files(repo_root: Path) -> list[str]:
     issues = []
-    for rel_path, snippets in REQUIRED_CONTRACT_SNIPPETS.items():
-        path = repo_root / rel_path
+    for path, text in _text_files(repo_root):
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            if path.suffix.lower() in {".yaml", ".yml"} or path.name.endswith((".yaml.tmpl", ".yml.tmpl")):
+                _validate_yaml_shape(text)
+            elif path.suffix.lower() == ".toml" or path.name.endswith(".toml.tmpl"):
+                tomllib.loads(text)
+            elif path.suffix.lower() == ".json" or path.name.endswith(".json.tmpl"):
+                json.loads(text)
+            elif path.suffix.lower() == ".py":
+                ast.parse(text, filename=rel)
+        except (ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError, SyntaxError) as exc:
+            issues.append(f"Parse failure in {rel}: {exc}")
+    return issues
+
+
+def _validate_skill_router(repo_root: Path) -> tuple[list[str], str | None]:
+    issues: list[str] = []
+    path = repo_root / "skill/engineering-workflow/SKILL.md"
+    if not path.exists():
+        return issues, None
+    text = path.read_text(encoding="utf-8")
+    metadata = _extract_frontmatter(text)
+    if metadata.get("name") != "engineering-workflow" or not metadata.get("description"):
+        issues.append("SKILL.md frontmatter is missing name or description")
+    version = metadata.get("metadata.version")
+    if not version or not SEMVER_RE.fullmatch(version):
+        issues.append("SKILL.md metadata.version is missing or not SemVer")
+        version = None
+    for heading in SKILL_REQUIRED_HEADINGS:
+        if heading not in text:
+            issues.append(f"SKILL.md is missing required heading: {heading}")
+    for marker in SKILL_REQUIRED_MARKERS:
+        if marker not in text:
+            issues.append(f"SKILL.md is missing structured invariant: {marker}")
+    for reference in SKILL_REQUIRED_REFERENCES:
+        if reference not in text:
+            issues.append(f"SKILL.md is missing canonical reference link: {reference}")
+    if len(text.splitlines()) > 140:
+        issues.append("SKILL.md is no longer a lean runtime router")
+    return issues, version
+
+
+def _validate_readme(repo_root: Path, version: str | None) -> list[str]:
+    path = repo_root / "README.md"
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    issues = []
+    for heading in README_REQUIRED_HEADINGS:
+        if heading not in text:
+            issues.append(f"README.md is missing required section: {heading}")
+    if 'CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"' not in text:
+        issues.append("README.md does not explain the official installer CODEX_HOME default")
+    if version and f"Current skill version: `{version}`." not in text:
+        issues.append("README.md current skill version does not match SKILL.md metadata.version")
+    for mode in ("refresh_loaded_skill", "update_installed_skill", "upgrade_target_workflow"):
+        if mode not in text:
+            issues.append(f"README.md is missing lifecycle or migration mode: {mode}")
+    if version and f"--target-version {version}" not in text:
+        issues.append("README.md target-upgrade prompt does not use the current version")
+    return issues
+
+
+def _validate_plan_contract(repo_root: Path) -> list[str]:
+    issues = []
+    template_path = repo_root / "skill/engineering-workflow/assets/templates/PLANS.md.tmpl"
+    if template_path.exists():
+        for item in validate_plan_schema(template_path.read_text(encoding="utf-8")):
+            issues.append(f"PLANS.md template: {item}")
+    reference_path = repo_root / "skill/engineering-workflow/references/planning_and_backlog.md"
+    if reference_path.exists():
+        text = reference_path.read_text(encoding="utf-8")
+        markers = (
+            "repo_change_plan: full_required",
+            "plan_mode_exit_materialization: required",
+            "direct_execution_materialization: required",
+            "compressed_active_plan: forbidden",
+            "## Resume And Milestone Reconciliation",
+            "## Pre-Commit Closure Gate",
+        )
+        for marker in markers:
+            if marker not in text:
+                issues.append(f"Planning reference is missing structural contract marker: {marker}")
+    root_plans = repo_root / "PLANS.md"
+    if root_plans.exists():
+        text = root_plans.read_text(encoding="utf-8")
+        if "## Active Plan:" in text:
+            for item in validate_plan_schema(text, declared_external_sources=True, require_fidelity_passed=True):
+                issues.append(f"Root PLANS.md: {item}")
+        for item in find_stale_completed_state(text):
+            issues.append(f"Root PLANS.md stale completed state: {item}")
+    return issues
+
+
+def _validate_canonical_owners(repo_root: Path) -> list[str]:
+    issues = []
+    skill_root = repo_root / "skill/engineering-workflow"
+    text_by_path: dict[str, str] = {}
+    for path in skill_root.rglob("*"):
+        if path.is_file() and (path.suffix.lower() == ".md" or path.name.endswith(".md.tmpl")):
+            text = _read_public_text(path)
+            if text is not None:
+                text_by_path[path.relative_to(repo_root).as_posix()] = text
+    for marker, owner in CANONICAL_OWNER_MARKERS.items():
+        found = sorted(path for path, text in text_by_path.items() if marker in text)
+        if found != [owner]:
+            issues.append(f"Canonical owner mismatch for {marker}: expected only {owner}, found {found}")
+
+    allowed_model_owners = {
+        "skill/engineering-workflow/references/model_profiles.md",
+        "skill/engineering-workflow/assets/agents/utility.toml.tmpl",
+        "skill/engineering-workflow/assets/agents/explorer.toml.tmpl",
+        "skill/engineering-workflow/assets/agents/reviewer.toml.tmpl",
+    }
+    for path, text in text_by_path.items():
+        if MODEL_SLUG_RE.search(text) and path not in allowed_model_owners:
+            issues.append(f"Concrete model mapping appears outside its canonical owner: {path}")
+    return issues
+
+
+def _validate_agent_profiles(repo_root: Path) -> list[str]:
+    issues = []
+    root = repo_root / "skill/engineering-workflow/assets/agents"
+    parsed: dict[str, dict] = {}
+    for name in ("utility", "explorer", "reviewer"):
+        path = root / f"{name}.toml.tmpl"
         if not path.exists():
             continue
-        text = path.read_text(encoding="utf-8")
-        for snippet in snippets:
-            if snippet not in text:
-                issues.append(f"Required planning contract text missing from {rel_path}: {snippet}")
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            issues.append(f"{path.name} is not parseable TOML: {exc}")
+            continue
+        parsed[name] = data
+        for field in ("name", "description", "developer_instructions", "model", "model_reasoning_effort", "sandbox_mode"):
+            if field not in data:
+                issues.append(f"{path.name} is missing required field: {field}")
+    utility = parsed.get("utility", {})
+    expected_utility_model = "gpt-" + "5.6-" + "terra"
+    if utility.get("model") != expected_utility_model or utility.get("model_reasoning_effort") != "low":
+        issues.append("Utility agent must use the current low-cost low-reasoning profile")
+    if utility.get("sandbox_mode") != "read-only":
+        issues.append("Utility agent must remain read-only")
+    explorer = parsed.get("explorer", {})
+    if explorer.get("sandbox_mode") != "read-only":
+        issues.append("Explorer agent must remain read-only")
+    reviewer = parsed.get("reviewer", {})
+    if reviewer.get("model_reasoning_effort") != "high" or reviewer.get("sandbox_mode") != "read-only":
+        issues.append("Reviewer agent must use high reasoning in read-only mode")
+    reference = repo_root / "skill/engineering-workflow/references/agent_orchestration.md"
+    if reference.exists():
+        text = reference.read_text(encoding="utf-8")
+        for marker in ("agents.max_depth = 1", "two or three", "single-writer", "PLANS.md", "periodic"):
+            if marker not in text:
+                issues.append(f"Agent orchestration reference is missing invariant: {marker}")
+    return issues
+
+
+def _validate_active_versions(repo_root: Path, version: str | None) -> list[str]:
+    if not version:
+        return []
+    issues = []
+    target_script = repo_root / "skill/engineering-workflow/scripts/upgrade_target_workflow.py"
+    if target_script.exists() and f'default="{version}"' not in target_script.read_text(encoding="utf-8"):
+        issues.append("Target-upgrade CLI default version does not match SKILL.md")
+    manifest = repo_root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml"
+    if manifest.exists():
+        match = re.search(r"(?m)^skill_version:\s*[\"']?([^\s\"']+)", manifest.read_text(encoding="utf-8"))
+        if match and match.group(1) != version:
+            issues.append("Active workflow state manifest version does not match SKILL.md")
+    return issues
+
+
+def _validate_openai_yaml(repo_root: Path) -> list[str]:
+    path = repo_root / "skill/engineering-workflow/agents/openai.yaml"
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    issues = []
+    if "$engineering-workflow" not in text:
+        issues.append("agents/openai.yaml default prompt does not mention $engineering-workflow")
+    if "allow_implicit_invocation: false" not in text:
+        issues.append("agents/openai.yaml must keep implicit invocation disabled")
+    match = re.search(r'(?m)^\s*short_description:\s*["\'](?P<value>.*?)["\']\s*$', text)
+    if not match or not 25 <= len(match.group("value")) <= 64:
+        issues.append("agents/openai.yaml short_description must be 25-64 characters")
     return issues
 
 
 def validate_skill_repo(repo_root: Path) -> dict:
-    errors = []
-    warnings = []
-    skill_version = None
-
-    for rel_path in REQUIRED_PATHS:
-        if not (repo_root / rel_path).exists():
-            errors.append(f"Missing required path: {rel_path}")
-
-    skill_md = repo_root / "skill/engineering-workflow/SKILL.md"
-    if skill_md.exists():
-        text = skill_md.read_text(encoding="utf-8")
-        frontmatter = _extract_frontmatter(text)
-        if frontmatter.get("name") != "engineering-workflow" or not frontmatter.get("description"):
-            errors.append("SKILL.md frontmatter is missing or malformed")
-        version = frontmatter.get("metadata.version")
-        if not version or not SEMVER_PATTERN.match(version):
-            errors.append("SKILL.md metadata.version is missing or not SemVer")
-        else:
-            skill_version = version
-        if "[TODO" in text or "TODO:" in text:
-            errors.append("SKILL.md still contains TODO markers")
-
-    readme = repo_root / "README.md"
-    if readme.exists():
-        readme_text = readme.read_text(encoding="utf-8")
-        if "[TODO" in readme_text:
-            errors.append("README.md still contains TODO markers")
-        required_sections = [
-            "## Quick Start",
-            "## Installing The Skill",
-            "## Using The Skill In Codex",
-            "## Forced Skill Refresh Prompt",
-            "## Operating Modes",
-            "## Planning And Backlog Lifecycle",
-            "## Example Workflows",
-        ]
-        for section in required_sections:
-            if section not in readme_text:
-                errors.append(f"README.md is missing required section: {section}")
-        if 'CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"' not in readme_text:
-            errors.append("README.md should explain the default CODEX_HOME location")
-        if "## Versioning And Updates" not in readme_text:
-            errors.append("README.md is missing versioning and update instructions")
-        if skill_version and f"Current skill version: `{skill_version}`." not in readme_text:
-            errors.append("README.md current skill version does not match SKILL.md metadata.version")
-
-    openai_yaml = repo_root / "skill/engineering-workflow/agents/openai.yaml"
-    if openai_yaml.exists():
-        text = openai_yaml.read_text(encoding="utf-8")
-        if "$engineering-workflow" not in text:
-            errors.append("agents/openai.yaml default prompt does not mention $engineering-workflow")
-        if "allow_implicit_invocation: false" not in text:
-            warnings.append("agents/openai.yaml should keep allow_implicit_invocation: false")
-
-    errors.extend(_check_for_forbidden_paths(repo_root))
-    errors.extend(_scan_public_text(repo_root))
-    errors.extend(_check_required_contract_text(repo_root))
-
-    return {"success": not errors, "errors": errors, "warnings": warnings}
+    root = repo_root.resolve()
+    errors: list[str] = []
+    warnings: list[str] = []
+    unsafe_required = False
+    for relative in REQUIRED_PATHS:
+        path = root / relative
+        if not path.exists():
+            errors.append(f"Missing required path: {relative}")
+        elif path.is_symlink():
+            errors.append(f"Required public path must not be a symlink: {relative}")
+            unsafe_required = True
+    if unsafe_required:
+        errors.extend(_check_forbidden_paths(root))
+        errors.extend(_scan_public_privacy(root))
+        return {
+            "success": False,
+            "skill_version": None,
+            "errors": errors,
+            "warnings": warnings,
+            "checks": {
+                "structural_contracts": False,
+                "public_privacy_scope": "tracked_and_untracked_public_text",
+                "parseable_formats": [],
+                "historical_versions_allowed": True,
+            },
+        }
+    router_errors, version = _validate_skill_router(root)
+    errors.extend(router_errors)
+    errors.extend(_validate_readme(root, version))
+    errors.extend(_validate_plan_contract(root))
+    errors.extend(_validate_canonical_owners(root))
+    errors.extend(_validate_agent_profiles(root))
+    errors.extend(_validate_active_versions(root, version))
+    errors.extend(_validate_openai_yaml(root))
+    errors.extend(_check_forbidden_paths(root))
+    errors.extend(_scan_public_privacy(root))
+    errors.extend(_validate_parseable_files(root))
+    return {
+        "success": not errors,
+        "skill_version": version,
+        "errors": errors,
+        "warnings": warnings,
+        "checks": {
+            "structural_contracts": True,
+            "public_privacy_scope": "tracked_and_untracked_public_text",
+            "parseable_formats": ["python", "yaml", "toml", "json"],
+            "historical_versions_allowed": True,
+        },
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate this public skill repository.")
     parser.add_argument("--repo-root", default=".", help="Path to the skill repository root")
     args = parser.parse_args()
-
-    result = validate_skill_repo(Path(args.repo_root).resolve())
-    print(result)
+    result = validate_skill_repo(Path(args.repo_root))
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["success"] else 1
 
 

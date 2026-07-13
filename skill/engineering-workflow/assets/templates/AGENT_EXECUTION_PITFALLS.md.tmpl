@@ -1,29 +1,15 @@
 # Agent Execution Pitfalls
 
-This note records recurring execution mistake patterns discovered during real work.
+Record recurring failure classes discovered during real work. Each entry names the trigger, broader failure, better default, and promotion or cleanup condition.
 
-Write generalized lessons, not one-off complaints. Each entry should explain the trigger, the broader failure class, and the better default behavior.
+## Entries
 
-## Planning And Context Discipline
+### <short failure-class title>
 
-- Do not restart a continuing task with a broad repo sweep when `PLANS.md` already documents the active blocker.
-- Do not compress active work so far that sources, locked decisions, or the resume point are lost after context compaction.
-- Do not resume after compaction or interruption until `PLANS.md`, backlog, validation state, and statuses agree.
-- Do not leave durable decisions only in chat; update `PLANS.md` before execution and handoff.
-- Do not commit completed work while its active plan still says `planned` or `in_progress`.
-- Do not leave stale "next work" or milestone status text in completed sections.
-- Do not treat conservative execution as permission to downscope the user's requested outcome.
-- Before asking the user, do a targeted read-only investigation unless the repo or local environment is unavailable.
+- Trigger: <repeatable situation>.
+- Failure class: <general mistake, not a one-off complaint>.
+- Better default: <specific preventive behavior>.
+- Evidence: <issue, plan, test, or incident reference>.
+- Lifecycle: <keep here, promote to project principles, or remove after the guardrail exists>.
 
-## Tooling And Validation Hygiene
-
-- Prefer the narrowest reproducer before broad reruns.
-- Keep passing output out of the working context.
-
-## Learning Loop
-
-- Capture the repeated pattern, not just the latest symptom.
-- If a lesson becomes a stable repo-wide rule, promote it to `docs/engineering/project_principles.md`.
-- If an actionable follow-up emerges from a pitfall, record it in `docs/codex/TASKS_BACKLOG.md` and promote it to `PLANS.md` only when work starts.
-- Do not turn a pitfall into backlog work unless it has an activation trigger and a next safe action.
-- Remove completed backlog items by default once useful context is captured elsewhere.
+Do not duplicate the full planning contract here. Link actionable inactive follow-up work from `docs/codex/TASKS_BACKLOG.md` and promote it into `PLANS.md` only when work begins.

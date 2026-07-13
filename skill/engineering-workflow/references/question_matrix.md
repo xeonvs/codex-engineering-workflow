@@ -23,6 +23,9 @@ Ask only when the answer materially changes the scaffold or creates merge risk.
 - retained-history policy when old plan trees still exist
 - external tracker ownership when backlog responsibility is ambiguous
 - compatibility-shim handling when legacy assistant docs already exist
+- whether the user means installed-skill update or target-workflow migration only when repository evidence and phrasing remain genuinely ambiguous
+- ownership or source-of-truth choices required before deleting, replacing, or editing protected content
+- runtime agent configuration when it was not explicitly requested through `--include-agent-config`
 
 ## Do Not Ask
 
@@ -30,5 +33,7 @@ Ask only when the answer materially changes the scaffold or creates merge risk.
 - whether active work should have one tracked registry
 - whether recurring pitfalls should live outside `AGENTS.md`
 - whether archived docs should remain separate from active workflow docs
+- whether direct execution can materialize the same full plan as Plan Mode
+- whether unknown files under a workflow-looking directory may be treated as managed
 
 Those are core defaults of this skill.

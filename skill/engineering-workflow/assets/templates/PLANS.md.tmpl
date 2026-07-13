@@ -1,68 +1,112 @@
 # Execution Plans
 
-Use this file for active, blocked, or recently completed execution work.
+plan_schema_version: 1
 
-For any task that changes repository state, update this file before implementation and again before handoff.
-Use a full active plan while work is active, blocked, pending validation, or handoff-relevant.
-Compact or archive completed plan detail only after validation and handoff are recorded.
-Before staging or committing, update each active plan to the state that will be true after the commit.
-After context compaction, interruption, resume, or milestone closure, reconcile plan, backlog, validation, and status text before code changes.
+Use a full active plan for every repository-changing task. Read-only work is exempt. The canonical lifecycle contract is documented by the installed `engineering-workflow` skill in `references/planning_and_backlog.md`.
 
 ## Active Plan: <short task title>
 
-Status: planned | in_progress | blocked | done
-Owner: <agent or engineer name>
+Status: planned
+Owner: root
 Last Updated: YYYY-MM-DD
 
 ### Goal
-One paragraph describing the end state.
+
+Describe the verified end state.
+
+### Plan Origin
+
+direct_execution
+
+Allowed values: `plan_mode_approved`, `direct_execution`, `resumed`, `backlog_promotion`, `external_handoff`.
 
 ### Requested Scope
-- User-requested outcomes that must remain in scope.
-- Explicit non-goals or scope reductions, with the reason and source.
+
+- Preserve every requested outcome until closure or an explicit superseding decision.
+
+### Requirement Traceability
+
+| Requirement | Complete outcome | Source | Work queue | Acceptance or validation | Status |
+| --- | --- | --- | --- | --- | --- |
+| REQ-001 | <complete outcome> | user prompt | WQ-01 | <observable acceptance criterion> | pending |
+
+### Explicit Non-Goals
+
+- <item outside the requested outcome and why>
 
 ### Constraints
-- Hard rules that cannot be violated.
 
-### Inputs
-- Docs, files, source references, issues, or retained artifacts the task depends on.
+- <hard rule or approval boundary>
+
+### Inputs And Sources
+
+- User request: <durable summary or attachment reference>
+- External source: <URL or `none declared`>
+
+### User Decisions And Answers
+
+- <decision, answer, date, and source, or `none yet`>
 
 ### Completed Baseline State
-- [x] Repo/workflow fact already verified.
-- [x] Prior completed checkpoint future agents should not redo.
+
+- [x] WQ-00 — <verified fact that should not be rediscovered>
 
 ### Current Work Queue
-1. [ ] Concrete next step.
-2. [ ] Validation and documentation update.
 
-Queue items should be ordered, independently checkable, scoped to one outcome, and clear about validation or documentation follow-up.
+- [ ] WQ-01 — Implement and validate REQ-001.
+
+Each queue item must be ordered, independently checkable, and mapped to every requirement it covers.
 
 ### Locked Decisions
-- Decision with reason and date.
+
+- <decision, rationale, and date>
 
 ### Verification
-- Tests, checks, and manual validation required.
+
+- REQ-001 / WQ-01: <command, test, review, or observable acceptance criterion>.
 
 ### Latest Validation Results
-- Command or check: result.
+
+- Not run yet.
+
+### Risks And Recovery
+
+- Risk: <failure mode>. Recovery: <bounded rollback or recovery action>.
 
 ### Resume Point
-- Exact next safe action if context is compacted or another agent resumes.
+
+- Start with WQ-01, the first unfinished queue item.
+
+### Plan Fidelity Check
+
+- [ ] Every agreed outcome has a requirement ID.
+- [ ] Every source URL is preserved.
+- [ ] Every user answer and locked decision is preserved.
+- [ ] No requirement was silently narrowed or removed.
+- [ ] The queue covers every requirement ID.
+- [ ] Validation covers every acceptance criterion.
+- [ ] Non-goals do not contradict requested scope.
+- [ ] The resume point names the first unfinished queue item.
+- [ ] This plan is not a compressed rewrite of a more detailed approved plan.
+
+Implementation must not begin or continue while this check fails.
 
 ### Reconciliation Check
-- Current milestone, next safe action, validation state, and status fields agree across `PLANS.md`, `docs/codex/TASKS_BACKLOG.md`, and related workflow docs.
-- Completed sections do not contain stale "next work", resume, or milestone status text that can be mistaken for current state.
+
+- [ ] Plan status, requirement statuses, current milestone, first unfinished queue item, resume point, backlog promotion, latest validation, working tree, and related workflow docs agree.
+- [ ] Completed sections contain no stale next-work, resume, current-milestone, active-blocker, or open-status wording.
 
 ### Pre-Commit Closure
-- If this task is complete, set `Status: done` or move the durable summary to `Recently Completed` before committing.
-- If this task remains active after commit, keep `Status: in_progress` or `blocked` and record the resume point above.
+
+- [ ] Completed work is `done`, compacted, or archived; unfinished work retains an exact resume point and truthful status.
+- [ ] Promoted backlog items and workflow state match the post-commit state.
 
 ### Handoff Notes
-- Remaining risks, blockers, or safe next actions.
+
+- <remaining risk, blocker, external follow-up, or safe next action>
 
 ## Recently Completed
 
-- [x] YYYY-MM-DD: Short completed repo-changing task and validation result.
+- [x] YYYY-MM-DD: <durable outcome and validation result>.
 
-Do not leave stale next-work or milestone-status text in completed entries. Link explicit follow-up work to `docs/codex/TASKS_BACKLOG.md`.
-Keep at most 10 recent entries by default. Archive a full completed plan under `docs/archive/plans/YYYY-MM-DD-<slug>.md` only when it preserves future-useful rationale, migration decisions, validation matrices, or an explicit retention requirement.
+Keep at most ten entries by default. Archive only future-useful rationale or explicitly retained history. A still-relevant follow-up belongs in an unfinished requirement, backlog item, external issue, or explicit link—not stale completed-state prose.

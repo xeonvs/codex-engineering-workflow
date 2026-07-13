@@ -11,6 +11,8 @@ Default mode is `conservative_merge`.
 - Do not convert archival or domain docs into active workflow docs.
 - Do not delete retained historical trees without explicit user approval.
 - Do not rewrite repo-specific policy or product rules into generic workflow prose.
+- Treat unknown ownership as protected until repository evidence or a user decision resolves it.
+- Do not infer managed ownership from broad `docs/codex/` or `docs/engineering/` prefixes.
 
 ## File Actions
 

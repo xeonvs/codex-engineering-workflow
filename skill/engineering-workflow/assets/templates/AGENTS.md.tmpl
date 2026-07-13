@@ -1,35 +1,24 @@
 # Agent Instructions
 
-Use this file as a short repository map and source-of-truth index.
+Use this file as a short repository map and source-of-truth index, not as a project manual.
 
 ## Repo Map
 
 - `{{ entrypoint_hint }}`
 - `{{ subsystem_hint }}`
-- `tests/` - regression and contract checks
+- `tests/` — regression and contract checks
 
-## Canonical Sources Of Truth
+## Workflow Sources Of Truth
 
-- `AGENTS.md`
-  - short repo map and durable pointers
-- `PLANS.md`
-  - active, blocked, or recently completed execution registry
-- `docs/engineering/project_principles.md`
-  - durable cross-cutting rules and doc ownership boundaries
-- `docs/codex/TASKS_BACKLOG.md`
-  - tracked future work that is not active
-- `docs/codex/AGENT_EXECUTION_PITFALLS.md`
-  - recurring execution mistakes
+- `PLANS.md` — full active plans and durable recent outcomes; follow plan schema version 1 from the installed `engineering-workflow` planning reference.
+- `docs/codex/TASKS_BACKLOG.md` — inactive future work.
+- `docs/engineering/project_principles.md` — stable cross-cutting rules and ownership boundaries.
+- `docs/codex/AGENT_EXECUTION_PITFALLS.md` — recurring execution failures.
+- `docs/codex/ENGINEERING_WORKFLOW_STATE.yaml` — workflow ownership and applied-version record.
 
 ## Working Defaults
 
-- For any task that changes repository state, open `PLANS.md` first.
-- Use a full active plan while work is active, blocked, pending validation, or handoff-relevant.
-- Record the user's requested scope, sources, constraints, locked decisions, validation, and resume point in `PLANS.md`.
-- Do not narrow the user's requested scope because the task is large or inconvenient.
-- Promote active work from `docs/codex/TASKS_BACKLOG.md` into `PLANS.md` before implementation.
-- After context compaction, interruption, resume, or milestone closure, reconcile `PLANS.md`, backlog, validation state, and statuses before code changes.
-- Before staging or committing, update active plans and promoted backlog items to their post-commit state.
-- Compact or archive completed plan detail only after validation and handoff are recorded.
-- Keep `AGENTS.md` short.
-- Prefer quiet, targeted validation over broad noisy runs.
+- Audit before editing and preserve repository-owned documents.
+- Materialize a full `PLANS.md` plan before any repository-changing implementation; read-only work is exempt.
+- After a resume or handoff, reconcile durable plan state before code changes.
+- Keep this map short and link domain-specific owners instead of copying them here.
