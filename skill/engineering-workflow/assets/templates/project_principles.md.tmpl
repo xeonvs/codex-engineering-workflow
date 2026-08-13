@@ -4,13 +4,23 @@ This file indexes stable, cross-cutting engineering principles. It does not dupl
 
 ## Core Principles
 
-1. Keep repository knowledge in named source-of-truth documents and keep `AGENTS.md` as their map.
-2. Preserve document ownership; unknown and domain-specific files stay protected until evidence says otherwise.
-3. Keep active repo-changing work resumable from `PLANS.md`; keep inactive work in the backlog.
-4. Validate mechanically at the narrowest safe boundary and record exact results.
-5. Convert repeated execution failures into durable guardrails without copying long contracts between files.
+<!-- ew:invariant id="workflow.owner-boundaries" -->
+### Source Ownership
+
+Keep each active engineering invariant in one named source-of-truth document. Preserve unknown and domain-specific files until ownership evidence or a user decision resolves them; routers and indexes link owners rather than restating their rules.
+
+<!-- ew:invariant id="workflow.validation-boundary" -->
+### Validation Boundary
+
+Validate mechanically at the narrowest safe boundary and record exact results. A check protects behavior or structure; it must not require duplicated normative prose merely to pass.
+
+<!-- ew:invariant id="workflow.incident-to-guard" -->
+### Incident Learning
+
+Convert a recurring failure class into one canonical invariant, a reachable task route, and an executable guard. Keep the incident catalog descriptive and retire historical detail when it no longer improves prevention.
 
 ## Owned References
 
 - Planning details: installed `engineering-workflow` skill, `references/planning_and_backlog.md`.
-- Repository-specific architecture, product, operations, QA, release, and security rules: <link each existing owner here>.
+- Instruction ownership and incident lifecycle: installed `engineering-workflow` skill, `references/instruction_lifecycle.md`.
+- Repository-specific architecture, product, operations, QA, release, and security rules remain under their existing owners and should be added to the matching `AGENTS.md` route.

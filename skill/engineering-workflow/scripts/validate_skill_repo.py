@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Iterable
@@ -20,9 +21,12 @@ from common import (  # noqa: E402
     scan_privacy_text,
     validate_plan_schema,
 )
+from instruction_contract import check_instruction_contract  # noqa: E402
+from plan_lifecycle import check_archive_indexes, closure_issues  # noqa: E402
 
 
 REQUIRED_PATHS = (
+    "AGENTS.md",
     "README.md",
     "LICENSE",
     ".github/workflows/ci.yml",
@@ -36,6 +40,9 @@ REQUIRED_PATHS = (
     "skill/engineering-workflow/scripts/sanitize_output.py",
     "skill/engineering-workflow/scripts/update_installed_skill.py",
     "skill/engineering-workflow/scripts/upgrade_target_workflow.py",
+    "skill/engineering-workflow/scripts/instruction_contract.py",
+    "skill/engineering-workflow/scripts/plan_lifecycle.py",
+    "skill/engineering-workflow/references/instruction_lifecycle.md",
     "skill/engineering-workflow/references/planning_and_backlog.md",
     "skill/engineering-workflow/references/agent_orchestration.md",
     "skill/engineering-workflow/references/model_profiles.md",
@@ -48,6 +55,12 @@ REQUIRED_PATHS = (
     "skill/engineering-workflow/assets/templates/PLANS.md.tmpl",
     "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl",
     "skill/engineering-workflow/assets/templates/ENGINEERING_WORKFLOW_STATE.yaml.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/docs_README.md.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/codex_README.md.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/engineering_README.md.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/archive_README.md.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/archive_plans_README.md.tmpl",
+    "skill/engineering-workflow/assets/templates/indexes/archive_backlog_README.md.tmpl",
     "skill/engineering-workflow/assets/agents/utility.toml.tmpl",
     "skill/engineering-workflow/assets/agents/explorer.toml.tmpl",
     "skill/engineering-workflow/assets/agents/reviewer.toml.tmpl",
@@ -67,7 +80,8 @@ SKILL_REQUIRED_HEADINGS = (
 )
 SKILL_REQUIRED_MARKERS = (
     "audit_before_edit: required",
-    "plan_schema_version: 1",
+    "plan_schema_version: 2",
+    "instruction_contract_version: 1",
     "repo_change_plan: full_required",
     "plan_mode_exit_materialization: required",
     "direct_execution_materialization: required",
@@ -75,6 +89,7 @@ SKILL_REQUIRED_MARKERS = (
 )
 SKILL_REQUIRED_REFERENCES = (
     "references/planning_and_backlog.md",
+    "references/instruction_lifecycle.md",
     "references/agent_orchestration.md",
     "references/model_profiles.md",
     "references/skill_update.md",
@@ -105,6 +120,8 @@ CANONICAL_OWNER_MARKERS = {
     "## Migration Report": "skill/engineering-workflow/references/target_workflow_upgrade.md",
     "## Token-Aware Classification": "skill/engineering-workflow/references/validation_safety.md",
     "## Public Scan Scope": "skill/engineering-workflow/references/privacy_and_sanitization.md",
+    "## Cause Codes": "skill/engineering-workflow/references/instruction_lifecycle.md",
+    "## Incident Catalog Schema": "skill/engineering-workflow/references/instruction_lifecycle.md",
 }
 
 
@@ -332,8 +349,10 @@ def _validate_plan_contract(repo_root: Path) -> list[str]:
             "plan_mode_exit_materialization: required",
             "direct_execution_materialization: required",
             "compressed_active_plan: forbidden",
+            "closure_transition: checked",
+            "archive_indexing: atomic",
             "## Resume And Milestone Reconciliation",
-            "## Pre-Commit Closure Gate",
+            "## Closure State Machine",
         )
         for marker in markers:
             if marker not in text:
@@ -344,9 +363,58 @@ def _validate_plan_contract(repo_root: Path) -> list[str]:
         if "## Active Plan:" in text:
             for item in validate_plan_schema(text, declared_external_sources=True, require_fidelity_passed=True):
                 issues.append(f"Root PLANS.md: {item}")
+            for item in closure_issues(text):
+                issues.append(f"Root PLANS.md lifecycle: {item}")
         for item in find_stale_completed_state(text):
             issues.append(f"Root PLANS.md stale completed state: {item}")
     return issues
+
+
+def _validate_instruction_assets(repo_root: Path) -> list[str]:
+    issues: list[str] = []
+    template_root = repo_root / "skill/engineering-workflow/assets/templates"
+    with tempfile.TemporaryDirectory(prefix="engineering-workflow-contract-") as temp_name:
+        target = Path(temp_name)
+        (target / "docs/codex").mkdir(parents=True)
+        (target / "docs/engineering").mkdir(parents=True)
+        agents = (template_root / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+        agents = agents.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", "src/")
+        (target / "AGENTS.md").write_text(agents, encoding="utf-8")
+        (target / "docs/engineering/project_principles.md").write_text(
+            (template_root / "project_principles.md.tmpl").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (target / "docs/codex/AGENT_EXECUTION_PITFALLS.md").write_text(
+            (template_root / "AGENT_EXECUTION_PITFALLS.md.tmpl").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        result = check_instruction_contract(target)
+    for item in result["errors"]:
+        issues.append(f"Instruction template contract: {item['code']} in {item['path']} ({item['detail']})")
+    return issues
+
+
+def _validate_root_agents_boundary(repo_root: Path) -> list[str]:
+    path = repo_root / "AGENTS.md"
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    issues: list[str] = []
+    for marker in ("local guidance", "not part of the installed", "must never be read by runtime skill scripts"):
+        if marker not in text:
+            issues.append(f"Root AGENTS.md is missing local-only boundary: {marker}")
+    packaged_root_agents = repo_root / "skill/engineering-workflow/AGENTS.md"
+    if packaged_root_agents.exists():
+        issues.append("Runtime skill contains a repository-local root AGENTS.md")
+    return issues
+
+
+def _validate_source_indexes(repo_root: Path) -> list[str]:
+    result = check_archive_indexes(repo_root)
+    return [
+        f"Source documentation index: {item['code']} in {item['path']} ({item['detail']})"
+        for item in result["errors"]
+    ]
 
 
 def _validate_canonical_owners(repo_root: Path) -> list[str]:
@@ -478,6 +546,9 @@ def validate_skill_repo(repo_root: Path) -> dict:
     errors.extend(router_errors)
     errors.extend(_validate_readme(root, version))
     errors.extend(_validate_plan_contract(root))
+    errors.extend(_validate_instruction_assets(root))
+    errors.extend(_validate_root_agents_boundary(root))
+    errors.extend(_validate_source_indexes(root))
     errors.extend(_validate_canonical_owners(root))
     errors.extend(_validate_agent_profiles(root))
     errors.extend(_validate_active_versions(root, version))

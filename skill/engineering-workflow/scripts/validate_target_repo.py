@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from common import (
@@ -16,6 +17,8 @@ from common import (
     run_in_disposable_copy,
     validate_plan_schema,
 )
+from instruction_contract import check_instruction_contract
+from plan_lifecycle import check_archive_indexes, closure_issues
 
 
 def validate_repo(
@@ -28,6 +31,8 @@ def validate_repo(
     audit = audit_repo(repo)
     errors: list[str] = []
     warnings: list[str] = []
+    instruction_contract = check_instruction_contract(repo)
+    archive_indexes = check_archive_indexes(repo)
 
     for index, command in enumerate(check_commands or [], start=1):
         safety = classify_command_safety(command)
@@ -61,7 +66,8 @@ def validate_repo(
     plans_path = repo / CANONICAL_FILES["plans"]
     if plans_path.exists():
         plans_text = plans_path.read_text(encoding="utf-8")
-        if "## Active Plan:" in plans_text:
+        has_active_plan = "## Active Plan:" in plans_text
+        if has_active_plan:
             for issue in validate_plan_schema(
                 plans_text,
                 declared_external_sources=bool("http://" in plans_text or "https://" in plans_text),
@@ -69,12 +75,34 @@ def validate_repo(
                 errors.append(f"PLANS.md contract error: {issue}")
         for issue in find_stale_completed_state(plans_text):
             errors.append(f"PLANS.md stale completed state: {issue}")
+        if has_active_plan or re.search(r"(?mi)^plan_schema_version:\s*`?2`?\s*$", plans_text):
+            for issue in closure_issues(plans_text):
+                errors.append(f"PLANS.md lifecycle error: {issue}")
 
     agents_path = repo / CANONICAL_FILES["agents"]
     if agents_path.exists():
-        line_count = len(agents_path.read_text(encoding="utf-8").splitlines())
+        agents_text = agents_path.read_text(encoding="utf-8")
+        line_count = len(agents_text.splitlines())
         if line_count > 220:
             warnings.append(f"AGENTS.md is long ({line_count} lines); keep it map-like")
+        for issue in instruction_contract["errors"]:
+            errors.append(
+                f"Instruction contract error: {issue['code']} in {issue['path']} ({issue['detail']})"
+            )
+        for issue in instruction_contract["warnings"]:
+            warnings.append(
+                f"Instruction contract warning: {issue['code']} in {issue['path']} ({issue['detail']})"
+            )
+
+    state_path = repo / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml"
+    state_text = state_path.read_text(encoding="utf-8") if state_path.exists() else ""
+    indexes_required = bool(
+        "instruction_contract_version: 1" in state_text
+        or (agents_path.exists() and "instruction_contract_version: 1" in agents_path.read_text(encoding="utf-8"))
+    )
+    if indexes_required:
+        for issue in archive_indexes["errors"]:
+            errors.append(f"Archive index error: {issue['code']} in {issue['path']} ({issue['detail']})")
 
     if audit["repo_maturity"] == "mature_repo" and audit["retained_history"] and not audit["optional_files"]["migration_note"]:
         warnings.append("Retained historical plan trees detected without exec plan migration note")
@@ -91,6 +119,8 @@ def validate_repo(
         "warnings": warnings,
         "ownership": audit["ownership"],
         "prompt_injection_risks": audit["prompt_injection_risks"],
+        "instruction_contract": instruction_contract,
+        "archive_indexes": archive_indexes,
         "disposable_results": disposable_results,
     }
 

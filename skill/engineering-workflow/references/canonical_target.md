@@ -4,12 +4,13 @@ The workflow layer uses one clear owner per concern and does not absorb reposito
 
 ## Canonical Files
 
-- `AGENTS.md`: short repository map and source-of-truth index
-- `PLANS.md`: full active plans, traceability, reconciliation, validation, recovery, and truthful recently completed state
+- `AGENTS.md`: short trigger/path router to canonical owners and required guards
+- `PLANS.md`: schema-v2 active plans, traceability, reconciliation, checked closure, and truthful recently completed state
 - `docs/engineering/project_principles.md`: durable cross-cutting engineering rules and ownership boundaries
 - `docs/codex/TASKS_BACKLOG.md`: future or inactive work with activation and exit criteria
-- `docs/codex/AGENT_EXECUTION_PITFALLS.md`: generalized recurring execution failure patterns
+- `docs/codex/AGENT_EXECUTION_PITFALLS.md`: non-normative incident classes, causes, owner/route/guard links, evidence, and retirement
 - `docs/codex/ENGINEERING_WORKFLOW_STATE.yaml`: explicit migration/version/ownership state for listed paths only
+- managed navigation indexes: `docs/README.md`, `docs/codex/README.md`, `docs/engineering/README.md`, and lazily created archive indexes
 
 ## Optional Files
 
@@ -37,4 +38,4 @@ Do not infer ownership from broad directory prefixes. A file under `docs/codex/`
 - external tracker records
 - unrelated archived research
 
-Index those sources from `AGENTS.md` when useful; do not rewrite or absorb them without explicit authorization.
+Route those sources from `AGENTS.md` when useful; do not rewrite, absorb, or restate them without explicit authorization.

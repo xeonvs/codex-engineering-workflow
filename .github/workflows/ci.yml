@@ -20,3 +20,5 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Revalidate clean repository state
         run: python skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
+      - name: Check patch whitespace
+        run: git diff --check

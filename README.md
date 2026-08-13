@@ -2,7 +2,7 @@
 
 Public standalone Codex skill for auditing, scaffolding, validating, updating, and migrating a repository's engineering-workflow layer.
 
-Current skill version: `0.5.1`.
+Current skill version: `0.6.0`.
 
 The skill keeps `AGENTS.md` as a map, `PLANS.md` as durable active execution state, and repository-specific product or domain documents under their existing owners. Repository-changing work always uses a full plan; read-only inspection is the only exception.
 
@@ -51,7 +51,7 @@ Do not infer the active installation from a similarly named directory. Refresh a
 Invoke the skill explicitly and describe the desired end state:
 
 ```text
-Use $engineering-workflow to add a full AGENTS/PLANS/backlog/pitfalls workflow while preserving existing architecture and operations docs.
+Use $engineering-workflow to add a full AGENTS/PLANS/backlog/incident-catalog workflow while preserving existing architecture and operations docs.
 ```
 
 ```text
@@ -117,7 +117,7 @@ Alternate upstreams require explicit confirmation and `--expected-commit` set to
 `Upgrade A Target Workflow` is a natural-language execution prompt. The agent invokes report-first orchestration itself; it applies automatically only when the report has no unresolved conflict, privacy finding, or approval-bound question.
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.5.1. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.6.0. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
 ```
 
 Prompt orchestration backend:
@@ -126,7 +126,7 @@ Prompt orchestration backend:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --prompt \
-  --target-version 0.5.1 \
+  --target-version 0.6.0 \
   --format json
 ```
 
@@ -136,7 +136,7 @@ For an explicitly report-only request, planning remains read-only:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --plan \
-  --target-version 0.5.1 \
+  --target-version 0.6.0 \
   --format json
 ```
 
@@ -146,7 +146,7 @@ Direct apply remains available to the agent after a separately reviewed report:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --apply \
-  --target-version 0.5.1 \
+  --target-version 0.6.0 \
   --format json
 ```
 
@@ -173,7 +173,11 @@ If a request could mean either self-update or target migration, the skill invest
 
 Every repository-changing task must materialize a full active plan in `PLANS.md` before implementation, tests, configuration, templates, or workflow documentation change. There is no lightweight exception. Plan Mode is optional: an approved Plan Mode plan is materialized as the first write after exit, while direct execution derives and materializes the same full schema as its first write.
 
-The active schema includes stable requirement IDs, source-to-queue-to-validation traceability, user decisions, risks and recovery, a fidelity self-check, reconciliation, pre-commit closure, handoff notes, and the exact first unfinished action. An agreed plan cannot be compressed during materialization.
+Planning schema v2 includes stable requirement IDs, source-to-queue-to-validation traceability, user decisions, risks and recovery, fidelity and reconciliation checks, a checked `ready_for_closure` transition, post-close delivery boundaries, and the exact first unfinished action. Use `plan_lifecycle.py` to compact or archive; a manual `Status: done` edit is not closure.
+
+Target `AGENTS.md` is a route table. Normative invariants have one canonical owner, while `AGENT_EXECUTION_PITFALLS.md` is a non-normative incident catalog that records cause, owner, route, guard, evidence, and retirement. `instruction_contract.py` checks this graph before target workflow version stamping.
+
+Every documentation directory created by the skill receives a navigation-only managed README. Archive directories are created lazily, every archived record is indexed exactly once, and existing unmarked README prose is never overwritten automatically.
 
 After context compaction, interruption, resume, milestone closure, handoff, or session change, the agent reads `PLANS.md`, inspects changes since its last update, and reconciles requirements, queue, backlog, validation, working tree, and statuses before more code changes. The 0.4.1 reconciliation and stale-completed-state protections remain in force.
 
@@ -185,7 +189,7 @@ Current capability-to-model mappings live only in `references/model_profiles.md`
 
 ## Validation And Privacy
 
-Strict read-only verification permits only known non-mutating inspection commands. Repository-authored scripts, project tests, package-manager commands, plugins, generators, and apparently safe commands with shell chaining are not read-only safe. Stronger checks run in a disposable copy with a minimal credential-free environment, timeout, bounded network policy, and cleanup.
+Strict read-only verification permits bounded diagnostics whose structured risk result has no writes, repository-code execution, network, or sensitive output. Normal-file `sed -n`, `head`, and search are allowed; write/execute modes and raw secret-file output are not. Repository-authored scripts, project tests, package-manager commands, plugins, generators, and shell chaining remain outside the read-only boundary. Stronger checks run in a disposable copy with a minimal credential-free environment, timeout, bounded network policy, and cleanup.
 
 The public scan covers all tracked text, including root plans, README, skill files, templates, tests, and CI. It reports only category, path, and line—not detected values. Historical version mentions are allowed in clearly historical or completed contexts; active version owners must agree.
 
@@ -206,7 +210,7 @@ Use $engineering-workflow to audit this mature repository, preserve every domain
 Target migration:
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.5.1. Run the report and apply it yourself when safe.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.6.0. Run the report and apply it yourself when safe.
 ```
 
 ## Repository Layout
@@ -226,11 +230,11 @@ python3 -m unittest discover -s tests -v
 git diff --check
 ```
 
-The validator checks structural ownership, plan schema markers, active version consistency, model-profile ownership, public privacy, parseable metadata and templates, and the absence of generated cache artifacts.
+The validator checks structural ownership, instruction routing, plan schema and closure markers, archive indexes, active version consistency, model-profile ownership, public privacy, parseable metadata and templates, and the absence of generated cache artifacts.
 
 ## Versioning And Updates
 
-The project uses semantic versioning. Version 0.5.0 added plan materialization and traceability, lifecycle-versus-migration routing, agent orchestration profiles, safe installed-skill update, target workflow migration, exact ownership classification, stricter command safety, and repository-wide privacy validation. Version 0.5.1 fixes environment-independent CI validation, makes refresh/update selection and target migration explicitly agent-invoked from natural-language prompts, binds alternate-source approval to an exact commit, hardens migration writes against path races, and closes privacy/validation output gaps.
+The project uses semantic versioning. Version 0.6.0 adds the executable instruction graph, a non-normative incident catalog, planning schema v2, checked compact/archive lifecycle, managed documentation indexes, fail-closed instruction migration, and multi-axis command risks. Version 0.5.1 remains the historical baseline for environment-independent validation, prompt-orchestrated refresh/migration, exact alternate-source binding, path-race hardening, and privacy coverage.
 
 Historical version records remain valid in completed or migration context. Current-version owners are `SKILL.md`, this README, current update prompts, and active workflow state manifests.
 

@@ -15,7 +15,7 @@ class PlanBootstrapTests(unittest.TestCase):
         result = plan_bootstrap.build_plan(FIXTURES / "empty_directory")
         self.assertEqual(result["recommended_mode"], "greenfield_scaffold")
         self.assertTrue(result["requires_full_plan"])
-        self.assertEqual(result["plan_schema_version"], 1)
+        self.assertEqual(result["plan_schema_version"], 2)
         self.assertEqual(result["plan_origin"], "direct_execution")
         self.assertEqual(result["first_repository_write"], "PLANS.md")
         self.assertEqual(result["artifact_actions"][0]["path"], "PLANS.md")

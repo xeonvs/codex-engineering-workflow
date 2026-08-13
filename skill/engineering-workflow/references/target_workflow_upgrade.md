@@ -9,14 +9,15 @@ Use this canonical reference for `upgrade_target_workflow`, which migrates the w
 3. Planning Gate
 4. Discovery
 5. Ownership Classification
-6. Conflict Analysis
-7. Migration Report
-8. Questions
-9. Mutation Boundaries
-10. Apply Sequence
-11. Codex Configuration
-12. Workflow State Manifest
-13. Validation And Rollback
+6. Instruction And Index Contract
+7. Conflict Analysis
+8. Migration Report
+9. Questions
+10. Mutation Boundaries
+11. Apply Sequence
+12. Codex Configuration
+13. Workflow State Manifest
+14. Validation And Rollback
 
 ## Prompt Invocation
 
@@ -63,7 +64,7 @@ Inspect:
 
 - root and nested `AGENTS.md`
 - `PLANS.md` and older execution-plan locations
-- backlog, pitfalls, project principles, compatibility instructions, and equivalent names
+- backlog, incident catalog, project principles, compatibility instructions, and equivalent names
 - `.codex/config.toml` and `.codex/agents/*.toml`
 - workflow state manifest and migration notes
 - external tracker references
@@ -84,12 +85,21 @@ Classify every discovered artifact as one of:
 
 Absence of a manifest never makes a file managed. Unknown remains protected until evidence or a user decision resolves ownership. Broad directory prefixes do not establish ownership.
 
+## Instruction And Index Contract
+
+Run `instruction_contract.py` during report and apply. A target version stamp requires a valid owner/route/incident/guard graph. Existing customized instruction owners return `instruction_migration_required`, `instruction_conflict`, or `guard_missing`; do not stamp the new version while preserving a conflicting old contract.
+
+Automatic replacement is limited to missing files and known pristine template fingerprints. Existing navigation README files without managed index markers require a targeted placement decision. Create `docs`, `docs/codex`, and `docs/engineering` indexes with the canonical workflow files; create archive indexes only for archive directories that already exist or are created by the operation.
+
 ## Conflict Analysis
 
 Look for:
 
 - duplicate owners and contradictory planning rules
-- compressed-plan or repo-change-without-plan instructions
+- compact checked queues, compressed-plan, or repo-change-without-plan instructions
+- active incidents whose owner, route, or guard cannot be resolved
+- customized shared instruction documents that cannot be safely auto-migrated
+- missing, broken, duplicate, orphaned, or unmanaged archive index entries
 - stale active plans and stale completed next-work state
 - conflicting backlog statuses
 - stale model pins or unsupported/excessive reasoning defaults
@@ -106,6 +116,7 @@ Before apply, return:
 - current workflow version
 - detected topology
 - managed, shared, protected, historical, external, and unknown paths
+- instruction-contract and archive-index status
 - conflicts and proposed changes
 - intentionally untouched files
 - required user questions
@@ -122,19 +133,20 @@ Perform targeted read-only investigation first. Use the host's structured questi
 
 Without a separate request, do not change product documentation, architecture manuals, domain rules, release or operational runbooks, QA/security policy, benchmark artifacts, or external tracker records.
 
-Do not replace a shared file wholesale. Change only workflow-owned files, explicit managed sections, necessary index links, compatibility shims, and the state manifest.
+Do not replace a customized shared file wholesale. Create missing files, replace only known pristine template fingerprints, and otherwise change explicit managed sections or links after ownership is resolved.
 
 ## Apply Sequence
 
 1. Capture the target-root filesystem identity, re-run the read-only audit, and refuse unresolved blocking conflicts or privacy findings.
 2. Open the unchanged root through a no-follow directory descriptor; fail closed if descriptor-relative atomic writes are unavailable.
 3. Materialize or update the full target plan as the first write.
-4. Create missing canonical workflow files from templates.
-5. Narrowly update only managed content or explicit links in shared files.
-6. Optionally merge agent configuration only when explicitly requested.
-7. Write the state manifest with relative paths.
-8. Validate and record exact changes in the target plan.
-9. Re-run the public privacy scan immediately before success.
+4. Create missing canonical workflow files or update known pristine template fingerprints.
+5. Create/update managed navigation indexes without replacing unmarked repository prose.
+6. Validate the complete instruction graph and indexes; stop before version stamping on any finding.
+7. Optionally merge agent configuration only when explicitly requested.
+8. Write the state manifest with relative paths and contract versions.
+9. Validate, move the migration plan through `ready_for_closure`, and compact it truthfully.
+10. Re-run the public privacy scan immediately before success.
 
 Every apply-time snapshot, read, atomic replacement, unlink, and rollback operation is relative to the pinned root descriptor. Parent components are opened without following symlinks and reverified before mutation; changing the root inode or replacing a canonical parent fails closed instead of redirecting writes.
 
@@ -169,6 +181,7 @@ Required fields:
 - `shared_paths`
 - `protected_paths`
 - `runtime_agent_config_managed`
+- `instruction_contract_version`
 - `planning_contract_version`
 - `orchestration_contract_version`
 
@@ -178,7 +191,7 @@ Use repository-relative paths. Never record a workstation path, username, home d
 
 - Keep `--plan` free of target writes, generated files, repo-code execution, network access, and plugin loading.
 - Treat the fresh apply-time report as authoritative: any privacy finding returns `privacy_review_required` before the first write, even when an earlier prompt report was clean.
-- Validate YAML/TOML structure, plan schema, relative manifest paths, ownership boundaries, config preservation, and absence of private paths.
+- Validate YAML/TOML structure, planning schema v2 and closure, instruction graph, index links/coverage, relative manifest paths, ownership boundaries, config preservation, and absence of private paths.
 - Report created, changed, untouched, and refused files.
 - Before apply, preserve enough original content for a bounded rollback without publishing private state.
 - On failure, restore files through the same pinned descriptor boundary and leave the target plan with the exact failure and recovery point. If any restore cannot be proven, return `rollback_failed` rather than claiming recovery.
