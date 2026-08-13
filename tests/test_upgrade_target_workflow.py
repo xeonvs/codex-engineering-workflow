@@ -70,8 +70,14 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(result["mutation_log"][0], "PLANS.md")
             self.assertTrue((root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml").exists())
             plan_text = (root / "PLANS.md").read_text(encoding="utf-8")
-            self.assertEqual(common.validate_plan_schema(plan_text, declared_external_sources=True), [])
-            self.assertIn("Status: done", plan_text)
+            self.assertNotIn("## Active Plan:", plan_text)
+            self.assertIn("## Recently Completed", plan_text)
+            self.assertIn("schema_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
+            self.assertIn("instruction_contract_version: 1", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
+            self.assertIn("planning_contract_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
+            self.assertTrue(result["validation_result"]["instruction_contract"])
+            for relative in ("docs/README.md", "docs/codex/README.md", "docs/engineering/README.md"):
+                self.assertTrue((root / relative).is_file(), relative)
 
     def test_atomic_replacement_preserves_existing_file_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -257,7 +263,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(existing["current_workflow_version"], "0.4.1")
             self.assertIn("docs/codex/ENGINEERING_WORKFLOW_STATE.yaml", existing["managed_paths"])
 
-    def test_protected_unknown_and_shared_files_remain_unchanged(self):
+    def test_customized_shared_instruction_requires_decision_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
@@ -271,11 +277,10 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             )
             before = {path: path.read_bytes() for path in protected_paths}
             result = migrator.apply_migration(root, "0.5.0")
-            self.assertTrue(result["success"], result)
+            self.assertFalse(result["success"], result)
+            self.assertEqual(result["update_status"], "question_required")
+            self.assertEqual(result["mutation_log"], [])
             self.assertEqual({path: path.read_bytes() for path in protected_paths}, before)
-            report = migrator.build_migration_report(root, "0.5.0")
-            self.assertIn("docs/codex/team-notes.md", report["ownership"]["unknown"])
-            self.assertIn("docs/engineering/service-notes.md", report["ownership"]["unknown"])
 
     def test_unrelated_active_plan_requires_targeted_question_and_no_write(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -306,6 +311,17 @@ Status: in_progress
         self.assertIsNotNone(conflict)
         self.assertIn("Product Release", conflict)
 
+    def test_v2_active_plan_requires_a_migration_decision(self):
+        text = """# Plans
+
+## Active Plan: Product Release
+
+Status: active
+"""
+        conflict = migrator._existing_active_conflict(text)
+        self.assertIsNotNone(conflict)
+        self.assertIn("Product Release", conflict)
+
     def test_contradictory_rule_in_canonical_file_requires_decision(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -317,6 +333,61 @@ Status: in_progress
             self.assertEqual(result["update_status"], "question_required")
             self.assertFalse((root / "PLANS.md").exists())
             self.assertEqual(agents.read_text(encoding="utf-8"), "Use a lightweight plan for quick work.\n")
+
+    def test_compact_checked_queue_rule_requires_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            agents = root / "AGENTS.md"
+            original = "Use a compact checked queue item for bounded changes.\n"
+            agents.write_text(original, encoding="utf-8")
+            result = migrator.apply_migration(root, "0.6.0")
+            self.assertEqual(result["update_status"], "question_required")
+            self.assertFalse((root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").exists())
+            self.assertEqual(agents.read_text(encoding="utf-8"), original)
+
+    def test_known_pristine_legacy_pitfalls_is_auto_migrated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            pitfalls = root / common.CANONICAL_FILES["pitfalls"]
+            pitfalls.write_text(
+                "# Agent Execution Pitfalls\n\n"
+                "Record recurring failure classes discovered during real work. Each entry names the trigger, broader failure, better default, and promotion or cleanup condition.\n\n"
+                "## Entries\n\n"
+                "### <short failure-class title>\n\n"
+                "- Trigger: <repeatable situation>.\n"
+                "- Failure class: <general mistake, not a one-off complaint>.\n"
+                "- Better default: <specific preventive behavior>.\n"
+                "- Evidence: <issue, plan, test, or incident reference>.\n"
+                "- Lifecycle: <keep here, promote to project principles, or remove after the guardrail exists>.\n\n"
+                "Do not duplicate the full planning contract here. Link actionable inactive follow-up work from `docs/codex/TASKS_BACKLOG.md` and promote it into `PLANS.md` only when work begins.\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(migrator._is_pristine_legacy(common.CANONICAL_FILES["pitfalls"], pitfalls.read_text(encoding="utf-8")))
+            result = migrator.apply_migration(root, "0.6.0")
+            self.assertTrue(result["success"], result)
+            self.assertIn("incident_schema_version: 1", pitfalls.read_text(encoding="utf-8"))
+
+    def test_instruction_failure_rolls_back_before_version_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            failure = {
+                "success": False,
+                "status": "guard_missing",
+                "routes": [],
+                "invariants": [],
+                "incidents": [],
+                "errors": [{"code": "guard_missing", "path": "AGENTS.md", "detail": "synthetic"}],
+                "warnings": [],
+            }
+            with mock.patch.object(migrator, "check_instruction_contract", return_value=failure):
+                result = migrator.apply_migration(root, "0.6.0")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "rolled_back")
+            self.assertFalse((root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
 
     def test_symlinked_canonical_parent_requires_decision_and_is_not_followed(self):
         with tempfile.TemporaryDirectory() as tmp:

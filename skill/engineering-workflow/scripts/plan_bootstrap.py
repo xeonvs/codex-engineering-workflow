@@ -21,8 +21,20 @@ def build_plan(repo: Path, repo_changing: bool = True, plan_origin: str = "direc
         ordered_keys = ["plans", *[key for key in CANONICAL_FILES if key != "plans"]]
         for key in ordered_keys:
             rel_path = CANONICAL_FILES[key]
-            action = "update_in_place" if audit["canonical_files"][key] else "create"
+            if not audit["canonical_files"][key]:
+                action = "create"
+            elif key == "plans":
+                action = "update_in_place"
+            else:
+                action = "review_merge"
             actions.append({"path": rel_path, "action": action})
+        index_dirs = ["docs", "docs/codex", "docs/engineering"]
+        for archive_dir in ("docs/archive", "docs/archive/plans", "docs/archive/backlog"):
+            if (repo / archive_dir).is_dir():
+                index_dirs.append(archive_dir)
+        for relative_dir in index_dirs:
+            readme = f"{relative_dir}/README.md"
+            actions.append({"path": readme, "action": "update_index" if (repo / readme).exists() else "create"})
 
     optional_actions = []
     if repo_changing and audit["repo_maturity"] == "mature_repo" and audit["retained_history"]:
@@ -63,6 +75,8 @@ def build_plan(repo: Path, repo_changing: bool = True, plan_origin: str = "direc
         "optional_artifact_actions": optional_actions,
         "protected_doc_actions": audit["context_docs"],
         "ownership": audit["ownership"],
+        "instruction_contract": audit["instruction_contract"],
+        "archive_indexes": audit["archive_indexes"],
         "questions": questions,
         "notes": notes,
     }

@@ -15,6 +15,10 @@ validate_target_repo = load_script_module("validate_target_repo")
 
 
 class ValidationTests(unittest.TestCase):
+    def test_mature_instruction_fixture_passes_contract_validation(self):
+        result = validate_target_repo.validate_repo(FIXTURES / "mature_repo", mode="read-only")
+        self.assertTrue(result["success"], result)
+
     def test_compileall_is_not_read_only_safe(self):
         self.assertEqual(common.classify_command_safety("python -m compileall ."), "copy_only_safe")
 
@@ -71,9 +75,18 @@ class ValidationTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(common.classify_command_safety(command), "live_only")
 
-    def test_sed_is_not_treated_as_a_general_read_only_boundary(self):
-        self.assertEqual(common.classify_command_safety("sed -n '1,5p' README.md"), "live_only")
+    def test_sed_allows_bounded_read_but_not_write_mode(self):
+        self.assertEqual(common.classify_command_safety("sed -n '1,5p' README.md"), "read_only_safe")
         self.assertEqual(common.classify_command_safety("sed -n 'w output.txt' README.md"), "live_only")
+        self.assertEqual(common.classify_command_safety("sed -n '1w output.txt' README.md"), "live_only")
+        self.assertEqual(common.classify_command_safety("sed -n '1e touch-output' README.md"), "live_only")
+
+    def test_sensitive_output_is_separate_from_read_only_tool_name(self):
+        risks = common.classify_command_risks("cat .env")
+        self.assertTrue(risks["sensitive_output"])
+        self.assertEqual(risks["classification"], "live_only")
+        self.assertEqual(common.classify_command_safety("test -e .env"), "read_only_safe")
+        self.assertEqual(common.classify_command_safety("rg --files .env"), "read_only_safe")
 
     def test_read_only_mode_rejects_compileall(self):
         result = validate_target_repo.validate_repo(

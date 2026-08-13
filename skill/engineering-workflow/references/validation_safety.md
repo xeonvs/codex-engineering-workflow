@@ -39,6 +39,13 @@ Use only when mutation of the real target is explicitly authorized and belongs t
 
 Parse a single command with `shlex` or an equivalent tokenizer. Reject malformed input and shell control syntax conservatively.
 
+Classify four independent risks before deriving the compatible legacy mode:
+
+- `writes` — changes filesystem, repository, configuration, or runtime state;
+- `repo_code_execution` — executes repository-authored code, plugins, hooks, or lifecycle scripts;
+- `network` — can contact or publish to another system;
+- `sensitive_output` — can print raw credentials, tokens, secret files, or equivalent private values.
+
 In read-only mode reject:
 
 - `&&`, `||`, semicolons, newlines, and pipes
@@ -49,7 +56,9 @@ In read-only mode reject:
 - hidden second commands
 - a safe prefix followed by an unsafe suffix
 
-Allowlist exact non-mutating Git subcommands and safe textual tools. Deny mutating Git subcommands even when the rest of the command looks harmless. Git pager, external-diff, text-conversion, and internal-exec options are live-only because configuration may launch helpers. For tools such as `find` and `sed`, reject their mutating/exec options, including GNU `find` output-file actions.
+Allowlist exact non-mutating Git subcommands and safe textual modes. Deny mutating Git subcommands even when the rest of the command looks harmless. Git pager, external-diff, text-conversion, and internal-exec options are live-only because configuration may launch helpers. Allow bounded normal-file reads such as `sed -n`, but reject `sed -i`, write commands, execute commands, and GNU `find` output-file/exec actions.
+
+A tool name alone never proves disclosure safety. Raw `cat`, `head`, `sed`, `grep`, or `rg` content reads against `.env`, credentials, secret, key, or equivalent paths are live-only because of `sensitive_output`. Names-only, existence, count, and boolean probes such as `test -e`, `ls`, `stat`, `wc`, `rg --files`, and quiet/files-with-matches searches remain diagnostic-safe when no other risk is present.
 
 ## Execution Boundary
 

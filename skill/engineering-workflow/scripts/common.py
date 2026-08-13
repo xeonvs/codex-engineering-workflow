@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-PLAN_SCHEMA_VERSION = 1
+PLAN_SCHEMA_VERSION = 2
 PLAN_ORIGINS = {
     "plan_mode_approved",
     "direct_execution",
@@ -40,7 +40,8 @@ REQUIRED_PLAN_SECTIONS = (
     "Resume Point",
     "Plan Fidelity Check",
     "Reconciliation Check",
-    "Pre-Commit Closure",
+    "Closure Gate",
+    "Post-Close Delivery",
     "Handoff Notes",
 )
 
@@ -68,6 +69,8 @@ SUPPORTED_ARCHIVE_PREFIXES = (
 )
 MANAGED_MARKER_START = "<!-- engineering-workflow:managed:start -->"
 MANAGED_MARKER_END = "<!-- engineering-workflow:managed:end -->"
+INDEX_MARKER_START = "<!-- engineering-workflow:index:start -->"
+INDEX_MARKER_END = "<!-- engineering-workflow:index:end -->"
 
 IGNORED_DIRS = {
     ".git",
@@ -358,7 +361,10 @@ def load_managed_paths(root: Path) -> set[str]:
 
 def _contains_managed_section(path: Path) -> bool:
     text = _read_text(path)
-    return MANAGED_MARKER_START in text and MANAGED_MARKER_END in text
+    return bool(
+        (MANAGED_MARKER_START in text and MANAGED_MARKER_END in text)
+        or (INDEX_MARKER_START in text and INDEX_MARKER_END in text)
+    )
 
 
 def classify_workflow_artifact(root: Path, path: Path, managed_paths: set[str] | None = None) -> str:
@@ -553,6 +559,12 @@ _MUTATING_GIT_SUBCOMMANDS = {
     "tag",
     "worktree",
 }
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?:^|[/\\])(?:\.env(?:\.[^/\\]+)?|credentials?(?:\.[^/\\]+)?|secrets?(?:\.[^/\\]+)?|"
+    r"id_(?:rsa|ed25519|ecdsa|dsa)|\.npmrc|\.pypirc|netrc|keychain)(?:$|[/\\])",
+    re.IGNORECASE,
+)
+_CONTENT_READING_EXECUTABLES = {"cat", "head", "tail", "rg", "grep", "sed"}
 
 
 def _has_unsafe_find_action(tokens: list[str]) -> bool:
@@ -570,29 +582,121 @@ def _has_unsafe_find_action(tokens: list[str]) -> bool:
     return any(token in unsafe for token in tokens[1:])
 
 
-def classify_command_safety(command: str) -> str:
-    """Classify a single command without trusting safe-looking prefixes."""
+def _sed_writes_or_executes(tokens: list[str]) -> bool:
+    if any(token == "--in-place" or token.startswith("--in-place=") or re.fullmatch(r"-i.*", token) for token in tokens[1:]):
+        return True
+    scripts: list[str] = []
+    skip_next = False
+    for index, token in enumerate(tokens[1:], start=1):
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"-e", "--expression", "-f", "--file"}:
+            if token in {"-f", "--file"}:
+                return True
+            if index + 1 < len(tokens):
+                scripts.append(tokens[index + 1])
+                skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        scripts.append(token)
+        break
+    script = ";".join(scripts)
+    return bool(
+        re.search(r"(?:^|[;{}\s])w(?:[;\s]|$)", script)
+        or re.search(r"(?:^|[;{}\s])e(?:[;\s]|$)", script)
+        or re.search(r"s(?:[^\\\n]|\\.)+[/|#]w(?:[;\s]|$)", script)
+    )
+
+
+def _sed_is_bounded_read(tokens: list[str]) -> bool:
+    if "-n" not in tokens and "--quiet" not in tokens and "--silent" not in tokens:
+        return False
+    if _sed_writes_or_executes(tokens):
+        return False
+    programs: list[str] = []
+    index = 1
+    while index < len(tokens):
+        argument = tokens[index]
+        if argument in {"-f", "--file"} or argument.startswith("--file="):
+            return False
+        if argument in {"-e", "--expression"}:
+            index += 1
+            if index >= len(tokens):
+                return False
+            programs.append(tokens[index])
+        elif argument.startswith("--expression="):
+            programs.append(argument.split("=", 1)[1])
+        elif argument.startswith("-"):
+            pass
+        elif not programs:
+            programs.append(argument)
+        else:
+            break
+        index += 1
+    safe_program = re.compile(r"\s*(?:(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?)?\s*p\s*")
+    return bool(programs) and all(safe_program.fullmatch(program) for program in programs)
+
+
+def _names_or_presence_only(executable: str, tokens: list[str]) -> bool:
+    if executable in {"ls", "stat", "readlink", "test", "wc"}:
+        return True
+    if executable == "rg":
+        return any(token in {"--files", "-l", "--files-with-matches", "-L", "--files-without-match"} for token in tokens[1:])
+    if executable == "grep":
+        return any(token in {"-l", "--files-with-matches", "-L", "--files-without-match", "-q", "--quiet", "--silent"} for token in tokens[1:])
+    return False
+
+
+def classify_command_risks(command: str) -> dict[str, object]:
+    """Return orthogonal command risks plus the compatible execution class."""
     stripped = command.strip()
+    result: dict[str, object] = {
+        "writes": False,
+        "repo_code_execution": False,
+        "network": False,
+        "sensitive_output": False,
+        "reasons": [],
+        "classification": "live_only",
+    }
     if not stripped or _SHELL_CONTROL.search(stripped):
-        return "live_only"
+        result["writes"] = bool(stripped)
+        result["reasons"] = ["empty_or_shell_control"]
+        return result
     try:
         tokens = shlex.split(stripped, posix=True)
     except ValueError:
-        return "live_only"
+        result["reasons"] = ["unparseable_shell"]
+        return result
     if not tokens:
-        return "live_only"
+        result["reasons"] = ["empty_command"]
+        return result
 
     executable = Path(tokens[0]).name.lower()
+    sensitive_path = any(_SENSITIVE_PATH_RE.search(token) for token in tokens[1:])
+    if sensitive_path and executable in _CONTENT_READING_EXECUTABLES and not _names_or_presence_only(executable, tokens):
+        result["sensitive_output"] = True
+        result["reasons"] = ["sensitive_path_content"]
+        return result
     if executable in _DESTRUCTIVE_EXECUTABLES:
-        return "live_only"
+        result["writes"] = executable not in {"curl", "wget", "ssh"}
+        result["network"] = executable in {"curl", "wget", "ssh", "scp", "rsync"}
+        result["reasons"] = ["mutation_or_network_tool"]
+        return result
     if executable == "git":
         if len(tokens) < 2 or tokens[1].startswith("-"):
-            return "live_only"
+            result["reasons"] = ["ambiguous_git_invocation"]
+            return result
         subcommand = tokens[1].lower()
         if subcommand in _MUTATING_GIT_SUBCOMMANDS:
-            return "live_only"
+            result["writes"] = True
+            result["network"] = subcommand in {"fetch", "pull", "push"}
+            result["reasons"] = ["mutating_git_subcommand"]
+            return result
         if subcommand not in _SAFE_GIT_SUBCOMMANDS:
-            return "live_only"
+            result["reasons"] = ["unsupported_git_subcommand"]
+            return result
         unsafe_git_options = ("--output", "--exec-path", "--open-files-in-pager")
         if any(
             token in {"--ext-diff", "--textconv", "--paginate", "-p"}
@@ -600,27 +704,57 @@ def classify_command_safety(command: str) -> str:
             or token.startswith(unsafe_git_options)
             for token in tokens[2:]
         ):
-            return "live_only"
-        return "read_only_safe"
+            result["writes"] = True
+            result["reasons"] = ["unsafe_git_option"]
+            return result
+        result["classification"] = "read_only_safe"
+        return result
 
     if executable in {"ls", "cat", "head", "tail", "wc", "pwd", "stat", "readlink", "test"}:
-        return "read_only_safe"
+        result["classification"] = "read_only_safe"
+        return result
     if executable in {"rg", "grep"}:
         if any(token in {"--pre", "--pre-glob"} or token.startswith("--pre=") for token in tokens[1:]):
-            return "live_only"
-        return "read_only_safe"
+            result["repo_code_execution"] = True
+            result["reasons"] = ["search_preprocessor"]
+            return result
+        result["classification"] = "read_only_safe"
+        return result
     if executable == "sed":
-        return "live_only"
+        if not _sed_is_bounded_read(tokens):
+            result["writes"] = True
+            result["reasons"] = ["sed_mode_not_proven_bounded_read"]
+            return result
+        result["classification"] = "read_only_safe"
+        return result
     if executable == "find":
-        return "live_only" if _has_unsafe_find_action(tokens) else "read_only_safe"
+        if _has_unsafe_find_action(tokens):
+            result["writes"] = True
+            result["repo_code_execution"] = any(token in {"-exec", "-execdir", "-ok", "-okdir"} for token in tokens)
+            result["reasons"] = ["unsafe_find_action"]
+            return result
+        result["classification"] = "read_only_safe"
+        return result
 
     if executable in {"python", "python3"}:
+        result["repo_code_execution"] = True
         if "-c" in tokens or "-" in tokens[1:2]:
-            return "live_only"
-        return "copy_only_safe"
+            result["reasons"] = ["inline_python"]
+            return result
+        result["classification"] = "copy_only_safe"
+        return result
     if executable in _COPY_ONLY_EXECUTABLES:
-        return "copy_only_safe"
-    return "live_only"
+        result["repo_code_execution"] = True
+        result["network"] = executable in {"npm", "npx", "pnpm", "yarn", "bun", "pip", "pip3", "poetry", "uv", "cargo", "go"}
+        result["classification"] = "copy_only_safe"
+        return result
+    result["reasons"] = ["unsupported_command"]
+    return result
+
+
+def classify_command_safety(command: str) -> str:
+    """Return the legacy string class derived from structured risk analysis."""
+    return str(classify_command_risks(command)["classification"])
 
 
 def recommended_checks(root: Path) -> dict[str, list[str]]:
@@ -797,6 +931,9 @@ def run_in_disposable_copy(repo: Path, commands: list[str], timeout_seconds: int
 
 
 def audit_repo(root: Path) -> dict:
+    from instruction_contract import check_instruction_contract
+    from plan_lifecycle import check_archive_indexes
+
     relevant_files = list(_iter_relevant_files(root))
     docs = [path for path in relevant_files if path.suffix.lower() in DOC_SUFFIXES]
     canonical_presence = {key: (root / rel_path).exists() for key, rel_path in CANONICAL_FILES.items()}
@@ -827,6 +964,8 @@ def audit_repo(root: Path) -> dict:
         name: [item["path"] for item in workflow_artifacts if item["classification"] == name]
         for name in ("managed", "shared", "protected", "external_source_of_truth", "historical", "unknown")
     }
+    instruction_contract = check_instruction_contract(root)
+    archive_indexes = check_archive_indexes(root)
 
     return {
         "root": str(root.resolve()),
@@ -844,6 +983,8 @@ def audit_repo(root: Path) -> dict:
         "retained_history": retained_history,
         "dominant_language": _detect_language(language_sources),
         "recommended_validation": recommended_checks(root),
+        "instruction_contract": instruction_contract,
+        "archive_indexes": archive_indexes,
     }
 
 
@@ -862,7 +1003,7 @@ def validate_plan_schema(
     require_fidelity_passed: bool = False,
 ) -> list[str]:
     issues: list[str] = []
-    if not re.search(r"(?mi)^(?:plan_schema_version|Plan Schema Version)\s*:\s*`?1`?\s*$", text):
+    if not re.search(rf"(?mi)^(?:plan_schema_version|Plan Schema Version)\s*:\s*`?{PLAN_SCHEMA_VERSION}`?\s*$", text):
         issues.append("missing or unsupported plan_schema_version")
     for section in REQUIRED_PLAN_SECTIONS:
         if not re.search(rf"(?m)^### {re.escape(section)}\s*$", text):
@@ -942,5 +1083,9 @@ def print_json(payload: dict) -> None:
 
 
 def find_placeholder_issues(text: str) -> list[str]:
-    patterns = (r"\[TODO[:\]]", r"\{\{[^}]+\}\}")
+    patterns = (
+        r"\[TODO[:\]]",
+        r"\{\{[^}]+\}\}",
+        r"<(?!/?(?:details|summary|br|code|kbd|sub|sup)\b|!--|https?://)[A-Za-z][^>\n]{0,100}>",
+    )
     return [pattern for pattern in patterns if re.search(pattern, text)]

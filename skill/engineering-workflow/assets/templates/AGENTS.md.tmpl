@@ -1,6 +1,8 @@
 # Agent Instructions
 
-Use this file as a short repository map and source-of-truth index, not as a project manual.
+instruction_contract_version: 1
+
+Use this file as a short route map, not as a project manual. Read the matched owners before changing the routed path and run the named guards before closure.
 
 ## Repo Map
 
@@ -10,15 +12,23 @@ Use this file as a short repository map and source-of-truth index, not as a proj
 
 ## Workflow Sources Of Truth
 
-- `PLANS.md` — full active plans and durable recent outcomes; follow plan schema version 1 from the installed `engineering-workflow` planning reference.
+- `PLANS.md` — full active plans and durable recent outcomes; follow plan schema version 2 from the installed `engineering-workflow` planning reference.
 - `docs/codex/TASKS_BACKLOG.md` — inactive future work.
 - `docs/engineering/project_principles.md` — stable cross-cutting rules and ownership boundaries.
-- `docs/codex/AGENT_EXECUTION_PITFALLS.md` — recurring execution failures.
+- `docs/codex/AGENT_EXECUTION_PITFALLS.md` — non-normative incident classes and evidence links.
 - `docs/codex/ENGINEERING_WORKFLOW_STATE.yaml` — workflow ownership and applied-version record.
 
-## Working Defaults
+## Task Routes
 
-- Audit before editing and preserve repository-owned documents.
-- Materialize a full `PLANS.md` plan before any repository-changing implementation; read-only work is exempt.
-- After a resume or handoff, reconcile durable plan state before code changes.
-- Keep this map short and link domain-specific owners instead of copying them here.
+<!-- ew:route id="planning" triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**" owners="skill://engineering-workflow/references/planning_and_backlog.md" guards="lint:plan-lifecycle" -->
+| `planning` | plan, backlog, closure, or archive | installed planning reference | `lint:plan-lifecycle` |
+
+<!-- ew:route id="workflow-instructions" triggers="AGENTS.md|docs/engineering/**|docs/codex/AGENT_EXECUTION_PITFALLS.md" owners="skill://engineering-workflow/references/instruction_lifecycle.md|docs/engineering/project_principles.md" guards="lint:instruction-contract" -->
+| `workflow-instructions` | instruction owner, route, or incident change | instruction lifecycle and project principles | `lint:instruction-contract` |
+
+<!-- ew:route id="repository-change" triggers="**" owners="docs/engineering/project_principles.md" guards="manual_review:run repository gates mapped by the owner" -->
+| `repository-change` | any repository-changing work not matched above | project principles and its domain-owner links | repository-specific gates |
+
+## Route Maintenance
+
+Add a route when a domain owner cannot otherwise be discovered from the changed path. Keep normative requirements in the owner and keep incident history in the catalog.

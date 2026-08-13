@@ -90,7 +90,7 @@ class PlanningContractTests(unittest.TestCase):
             "new Codex session",
         ):
             self.assertIn(boundary, text)
-        for status in ("done", "in_progress", "blocked", "promoted", "superseded"):
+        for status in ("active", "ready_for_closure", "done", "in_progress", "blocked", "out_of_scope"):
             self.assertIn(f"`{status}`", text)
 
     def test_stale_completed_state_is_behaviorally_detected(self):

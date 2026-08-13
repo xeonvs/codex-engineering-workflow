@@ -14,16 +14,18 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.5.1"
+CURRENT_VERSION = "0.6.0"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
     def _copy_repo_subset(self, target: Path) -> None:
         shutil.copy2(REPO_ROOT / "README.md", target / "README.md")
+        shutil.copy2(REPO_ROOT / "AGENTS.md", target / "AGENTS.md")
         shutil.copy2(REPO_ROOT / "LICENSE", target / "LICENSE")
         if (REPO_ROOT / "PLANS.md").exists():
             shutil.copy2(REPO_ROOT / "PLANS.md", target / "PLANS.md")
         shutil.copytree(REPO_ROOT / ".github", target / ".github")
+        shutil.copytree(REPO_ROOT / "docs", target / "docs")
         shutil.copytree(
             REPO_ROOT / "skill",
             target / "skill",
@@ -37,6 +39,11 @@ class SkillRepoValidationTests(unittest.TestCase):
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertTrue(result["success"], result)
             self.assertEqual(result["skill_version"], CURRENT_VERSION)
+
+    def test_root_agents_is_local_and_not_packaged_with_skill(self):
+        text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("not part of the installed", text)
+        self.assertFalse((REPO_ROOT / "skill/engineering-workflow/AGENTS.md").exists())
 
     def test_forbidden_cache_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

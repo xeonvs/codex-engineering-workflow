@@ -1,12 +1,12 @@
 # Execution Plans
 
-plan_schema_version: 1
+plan_schema_version: 2
 
-Use a full active plan for every repository-changing task. Read-only work is exempt. The canonical lifecycle contract is documented by the installed `engineering-workflow` skill in `references/planning_and_backlog.md`.
+Use a full active plan for every repository-changing task. Read-only work is exempt. The canonical lifecycle contract is the installed `engineering-workflow` reference `references/planning_and_backlog.md`.
 
 ## Active Plan: <short task title>
 
-Status: planned
+Status: active
 Owner: root
 Last Updated: YYYY-MM-DD
 
@@ -53,7 +53,7 @@ Allowed values: `plan_mode_approved`, `direct_execution`, `resumed`, `backlog_pr
 
 ### Current Work Queue
 
-- [ ] WQ-01 — Implement and validate REQ-001.
+- [ ] WQ-01 — Implement and validate REQ-001. `pending`
 
 Each queue item must be ordered, independently checkable, and mapped to every requirement it covers.
 
@@ -93,20 +93,27 @@ Implementation must not begin or continue while this check fails.
 
 ### Reconciliation Check
 
-- [ ] Plan status, requirement statuses, current milestone, first unfinished queue item, resume point, backlog promotion, latest validation, working tree, and related workflow docs agree.
+- [ ] Plan status, requirement statuses, first unfinished queue item, resume point, backlog promotion, latest validation, working tree, indexes, and related workflow docs agree.
 - [ ] Completed sections contain no stale next-work, resume, current-milestone, active-blocker, or open-status wording.
 
-### Pre-Commit Closure
+### Closure Gate
 
-- [ ] Completed work is `done`, compacted, or archived; unfinished work retains an exact resume point and truthful status.
-- [ ] Promoted backlog items and workflow state match the post-commit state.
+- [ ] Every in-scope requirement and queue item is terminal.
+- [ ] Applicable validation is current for the final content.
+- [ ] Review feedback, omissions, backlog, and indexes are reconciled.
+- [ ] Resume Point contains no future in-scope work.
+- [ ] Compact or archive disposition can be applied atomically.
+
+### Post-Close Delivery
+
+- <commit, push, CI, or release work that is completed, explicitly out of scope, or handled after closure without appearing as unfinished implementation work>
 
 ### Handoff Notes
 
-- <remaining risk, blocker, external follow-up, or safe next action>
+- <remaining risk, external follow-up, or `none`>
 
 ## Recently Completed
 
 - [x] YYYY-MM-DD: <durable outcome and validation result>.
 
-Keep at most ten entries by default. Archive only future-useful rationale or explicitly retained history. A still-relevant follow-up belongs in an unfinished requirement, backlog item, external issue, or explicit link—not stale completed-state prose.
+Keep at most ten entries by default. Archive only future-useful rationale or explicitly retained history. A still-relevant follow-up belongs in an unfinished requirement, backlog item, external issue, or explicit post-close delivery boundary—not stale completed-state prose.

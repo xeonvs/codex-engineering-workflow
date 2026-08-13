@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,15 @@ from common import (
     scan_public_tree,
     validate_plan_schema,
 )
+from instruction_contract import check_instruction_contract
+from plan_lifecycle import (
+    INDEX_END,
+    INDEX_START,
+    LifecycleError,
+    check_archive_indexes,
+    closure_issues,
+    planned_index_writes,
+)
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +47,19 @@ TARGET_VERSION_RE = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+LEGACY_PRISTINE_HASHES = {
+    "AGENTS.md": {"c27a53d5105daae7e45ffb078d6441f19ee4285600a0fed9df776656f13bbb12"},
+    CANONICAL_FILES["principles"]: {"cb72c47c3d9d7165eaeedfcded0d222a1d558ec90440887bf8569862b307b5aa"},
+    CANONICAL_FILES["pitfalls"]: {"87fc6d71cfef930f8198b7846628b86232e9131e966a52b49aa3f73d6b0f07c3"},
+}
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _is_pristine_legacy(relative: str, text: str) -> bool:
+    return _content_hash(text) in LEGACY_PRISTINE_HASHES.get(relative, set())
 
 
 class MigrationConflict(RuntimeError):
@@ -361,7 +384,7 @@ def _existing_active_conflict(plans_text: str) -> str | None:
         title = section.group("title").strip()
         if title.startswith("Engineering Workflow Upgrade"):
             continue
-        status = re.search(r"(?m)^Status:\s*(planned|in_progress|blocked)\s*$", section.group("body"))
+        status = re.search(r"(?m)^Status:\s*(planned|in_progress|active|blocked|ready_for_closure)\s*$", section.group("body"))
         if status:
             return f"Unrelated active plan must remain owned by its current task: {title}"
     return None
@@ -371,6 +394,7 @@ def _scan_contract_conflicts(root: Path) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     patterns = (
         ("compressed_plan_rule", re.compile(r"\b(?:lightweight|compact|short)\s+(?:active\s+)?plan\b", re.IGNORECASE)),
+        ("compact_queue_rule", re.compile(r"\bcompact(?:\s+checked)?\s+queue(?:\s+item)?\b", re.IGNORECASE)),
         ("repo_change_without_plan", re.compile(r"\b(?:small|minor|quick)\s+changes?\b.{0,80}\b(?:without|no)\s+(?:a\s+)?plan\b", re.IGNORECASE)),
     )
     canonical_mutation_paths = {
@@ -492,6 +516,24 @@ def _proposed_changes(root: Path, include_agent_config: bool) -> list[dict[str, 
     for relative in template_map:
         if not _present(root / relative):
             changes.append({"path": relative, "action": "create", "reason": "missing canonical shared workflow file"})
+        elif _is_pristine_legacy(relative, _read(root / relative)):
+            changes.append({"path": relative, "action": "update", "reason": "known pristine legacy template fingerprint"})
+    index_dirs = ["docs", "docs/codex", "docs/engineering"]
+    if (root / "docs/archive").exists():
+        index_dirs.append("docs/archive")
+    if (root / "docs/archive/plans").exists():
+        index_dirs.append("docs/archive/plans")
+    if (root / "docs/archive/backlog").exists():
+        index_dirs.append("docs/archive/backlog")
+    for relative_dir in index_dirs:
+        relative = f"{relative_dir}/README.md"
+        changes.append(
+            {
+                "path": relative,
+                "action": "update" if _present(root / relative) else "create",
+                "reason": "maintain navigation-only managed index",
+            }
+        )
     changes.append({
         "path": STATE_MANIFEST_PATH,
         "action": "update" if _present(root / STATE_MANIFEST_PATH) else "create",
@@ -513,7 +555,48 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
         raise MigrationConflict("missing_repository", "Target repository does not exist")
     audit = audit_repo(root)
     conflicts = _scan_contract_conflicts(root)
-    blocking_types = {"unrelated_active_plan", "invalid_codex_config"}
+    instruction_contract = audit["instruction_contract"]
+    if not instruction_contract["success"]:
+        existing_instruction_paths = [
+            relative
+            for relative in ("AGENTS.md", CANONICAL_FILES["principles"], CANONICAL_FILES["pitfalls"])
+            if (root / relative).is_file()
+        ]
+        customized = [
+            relative
+            for relative in existing_instruction_paths
+            if not _is_pristine_legacy(relative, _read(root / relative))
+        ]
+        if customized:
+            conflicts.append(
+                {
+                    "type": instruction_contract["status"],
+                    "path": ",".join(customized),
+                    "requires_decision": "true",
+                    "detail": "customized instruction owners require an explicit semantic migration",
+                }
+            )
+    for relative_dir in ("docs", "docs/codex", "docs/engineering", "docs/archive", "docs/archive/plans", "docs/archive/backlog"):
+        readme = root / relative_dir / "README.md"
+        if readme.is_file():
+            text = _read(readme)
+            if INDEX_START not in text or INDEX_END not in text:
+                conflicts.append(
+                    {
+                        "type": "index_migration_required",
+                        "path": readme.relative_to(root).as_posix(),
+                        "requires_decision": "true",
+                        "detail": "existing README has no managed index marker block",
+                    }
+                )
+    blocking_types = {
+        "unrelated_active_plan",
+        "invalid_codex_config",
+        "instruction_migration_required",
+        "instruction_conflict",
+        "guard_missing",
+        "index_migration_required",
+    }
     if include_agent_config:
         blocking_types.update({"conflicting_max_depth", "unsupported_inline_agents"})
     questions = []
@@ -526,6 +609,10 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
             questions.append("How should the existing inline or dotted agents configuration be structurally migrated?")
         elif finding["type"] == "canonical_symlink":
             questions.append(f"Should the canonical symlink at {finding['path']} be retained, retargeted, or replaced?")
+        elif finding["type"] in {"instruction_migration_required", "instruction_conflict", "guard_missing"}:
+            questions.append(f"Which canonical owners and routes should replace the customized instruction contract in {finding['path']}?")
+        elif finding["type"] == "index_migration_required":
+            questions.append(f"Where may the managed navigation block be inserted in {finding['path']} without replacing repository-owned prose?")
         elif finding.get("requires_decision") == "true":
             questions.append(f"Which source should own the contradictory planning rule in {finding['path']}?")
     proposed = _proposed_changes(root, include_agent_config)
@@ -551,12 +638,16 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
         "protected_paths": protected,
         "historical_paths": ownership["historical"],
         "conflicts": conflicts,
+        "instruction_contract": instruction_contract,
+        "archive_indexes": audit["archive_indexes"],
         "privacy_findings": privacy_findings,
         "proposed_changes": proposed,
         "untouched_files": sorted(path for path in protected if path not in touched),
         "required_user_questions": questions,
         "validation_plan": [
             "validate full PLANS.md schema and traceability",
+            "validate instruction owners, routes, incident links, and guards",
+            "validate documentation indexes and archive coverage",
             "parse workflow manifest and optional TOML",
             "verify protected files remain byte-identical",
             "scan changed public text for private paths and credential-like values",
@@ -567,7 +658,7 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
 
 
 def _migration_plan(target_version: str, include_agent_config: bool, *, done: bool = False, result: str = "Not run yet.") -> str:
-    status = "done" if done else "in_progress"
+    status = "ready_for_closure" if done else "active"
     checkbox = "x" if done else " "
     req_status = "done" if done else "in_progress"
     today = datetime.now(timezone.utc).date().isoformat()
@@ -578,7 +669,7 @@ def _migration_plan(target_version: str, include_agent_config: bool, *, done: bo
 Status: {status}
 Owner: root
 Last Updated: {today}
-plan_schema_version: 1
+plan_schema_version: 2
 
 ### Goal
 
@@ -624,9 +715,9 @@ direct_execution
 
 ### Current Work Queue
 
-- [x] WQ-01 — Materialize this full plan for REQ-001 as the first write.
-- [{checkbox}] WQ-02 — Apply and validate canonical workflow/manifest changes for REQ-002.
-- [{checkbox}] WQ-03 — Preserve or structurally merge runtime configuration for REQ-003.
+- [x] WQ-01 — Materialize this full plan for REQ-001 as the first write. `done`
+- [{checkbox}] WQ-02 — Apply and validate canonical workflow/manifest changes for REQ-002. `{req_status}`
+- [{checkbox}] WQ-03 — Preserve or structurally merge runtime configuration for REQ-003. `{req_status}`
 
 ### Locked Decisions
 
@@ -640,7 +731,7 @@ direct_execution
 
 ### Latest Validation Results
 
-- {result}
+- {today}: {result}
 
 ### Risks And Recovery
 
@@ -658,13 +749,18 @@ direct_execution
 
 - [{'x' if done else ' '}] Requirements, queue, validation, working tree, manifest, and statuses agree; completed text has no stale next-work state.
 
-### Pre-Commit Closure
+### Closure Gate
 
-- [{'x' if done else ' '}] The migration plan reflects its post-apply state and no promoted backlog state is stale.
+- [{'x' if done else ' '}] Every requirement and queue item is terminal, validation is current, and no promoted backlog or index state is stale.
+- [{'x' if done else ' '}] Resume Point contains no unfinished in-scope work and compact closure can be applied atomically.
+
+### Post-Close Delivery
+
+- Target workflow migration only; commit, push, CI, release, and deployment are outside this operation.
 
 ### Handoff Notes
 
-- {'Migration complete; review the reported file and configuration diffs.' if done else 'Continue only from the first unfinished queue item after reconciling target state.'}
+- {'Migration complete; no unfinished in-scope work remains.' if done else 'Continue only from the first unfinished queue item after reconciling target state.'}
 {PLAN_MARKER_END}
 """
 
@@ -684,6 +780,39 @@ def _put_plan_first(existing: str, plan: str) -> str:
     if lines and lines[0].startswith("# "):
         return lines[0].rstrip() + "\n\n" + plan + "\n" + "".join(lines[1:]).lstrip()
     return "# Execution Plans\n\n" + plan + "\n" + existing
+
+
+def _close_migration_plan(existing: str, target_version: str) -> str:
+    without = re.sub(
+        re.escape(PLAN_MARKER_START) + r".*?" + re.escape(PLAN_MARKER_END) + r"\s*",
+        "",
+        existing,
+        count=1,
+        flags=re.DOTALL,
+    )
+    without = re.sub(
+        r"(?mi)^plan_schema_version:\s*`?\d+`?\s*$",
+        "plan_schema_version: 2",
+        without,
+        count=1,
+    )
+    if "plan_schema_version: 2" not in without:
+        lines = without.splitlines()
+        if lines and lines[0].startswith("# "):
+            without = lines[0] + "\n\nplan_schema_version: 2\n\n" + "\n".join(lines[1:]).lstrip()
+        else:
+            without = "# Execution Plans\n\nplan_schema_version: 2\n\n" + without.lstrip()
+    entry = (
+        f"- [x] {datetime.now(timezone.utc).date().isoformat()}: "
+        f"Upgraded the repository workflow contract to {target_version} and validated instruction routing, indexes, ownership, and privacy."
+    )
+    recent = re.search(r"(?m)^## Recently Completed\s*$", without)
+    if recent:
+        insertion = recent.end()
+        without = without[:insertion] + "\n\n" + entry + without[insertion:]
+    else:
+        without = without.rstrip() + "\n\n## Recently Completed\n\n" + entry + "\n"
+    return without.rstrip() + "\n"
 
 
 def _merge_codex_config(text: str) -> tuple[str, str]:
@@ -728,7 +857,7 @@ def _manifest_text(
 ) -> str:
     applied = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     lines = [
-        "schema_version: 1",
+        "schema_version: 2",
         "skill_name: engineering-workflow",
         f"skill_version: {_yaml_quote(target_version)}",
         f"applied_at: {_yaml_quote(applied)}",
@@ -748,7 +877,8 @@ def _manifest_text(
     lines.extend(
         [
             f"runtime_agent_config_managed: {'true' if include_agent_config else 'false'}",
-            "planning_contract_version: 1",
+            "instruction_contract_version: 1",
+            "planning_contract_version: 2",
             "orchestration_contract_version: 1",
         ]
     )
@@ -839,8 +969,25 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
                 CANONICAL_FILES["pitfalls"]: ("AGENT_EXECUTION_PITFALLS.md.tmpl", {}),
             }
             for relative, (name, replacements) in template_map.items():
-                if not secure.exists(relative):
+                existing = read(relative) if secure.exists(relative) else ""
+                if not existing or _is_pristine_legacy(relative, existing):
                     write(relative, _template(name, replacements))
+
+            try:
+                for relative, data in planned_index_writes(root).items():
+                    write(relative, data.decode("utf-8"))
+            except LifecycleError as exc:
+                raise MigrationConflict(exc.code, str(exc)) from exc
+
+            instruction_result = check_instruction_contract(root)
+            if not instruction_result["success"]:
+                raise MigrationConflict(
+                    instruction_result["status"],
+                    "Generated instruction contract did not validate",
+                )
+            index_result = check_archive_indexes(root)
+            if not index_result["success"]:
+                raise MigrationConflict("index_validation_failed", "Generated documentation indexes did not validate")
 
             if include_agent_config:
                 existing_config = read(".codex/config.toml")
@@ -890,8 +1037,10 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
             final_plan = _migration_plan(target_version, include_agent_config, done=True, result=final_result)
             write("PLANS.md", _put_plan_first(read("PLANS.md"), final_plan))
             final_plan_issues = validate_plan_schema(read("PLANS.md"), declared_external_sources=True)
+            final_plan_issues.extend(closure_issues(read("PLANS.md"), require_ready=True))
             if final_plan_issues:
                 raise MigrationConflict("invalid_generated_plan", "; ".join(final_plan_issues))
+            write("PLANS.md", _close_migration_plan(read("PLANS.md"), target_version))
 
             secure.assert_identity()
             final_privacy_findings = scan_public_tree(root)
@@ -959,7 +1108,14 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
             "changed_files": sorted(set(changed)),
             "mutation_log": mutation_log,
             "config_diff": config_diff,
-            "validation_result": {"success": True, "plan_schema": True, "privacy": True, "toml": True},
+            "validation_result": {
+                "success": True,
+                "plan_schema": True,
+                "instruction_contract": True,
+                "archive_indexes": True,
+                "privacy": True,
+                "toml": True,
+            },
         }
 
 
@@ -1025,7 +1181,7 @@ def main() -> int:
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--prompt", action="store_true")
-    parser.add_argument("--target-version", default="0.5.1")
+    parser.add_argument("--target-version", default="0.6.0")
     parser.add_argument("--include-agent-config", action="store_true")
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args()

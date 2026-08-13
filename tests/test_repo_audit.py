@@ -27,6 +27,9 @@ class RepoAuditTests(unittest.TestCase):
         self.assertEqual(result["repo_maturity"], "mature_repo")
         self.assertTrue(result["retained_history"])
         self.assertTrue(result["canonical_files"]["agents"])
+        self.assertTrue(result["instruction_contract"]["success"], result["instruction_contract"])
+        self.assertIn("archive_indexes", result)
+        self.assertIn("docs/README.md", result["ownership"]["managed"])
 
     def test_general_repo_uses_structural_audit(self):
         result = repo_audit.audit_repo(FIXTURES / "general_repo")
