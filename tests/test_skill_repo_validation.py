@@ -295,6 +295,13 @@ class SkillRepoValidationTests(unittest.TestCase):
         self.assertGreater(tests, first)
         self.assertGreater(second, tests)
 
+    def test_ci_actions_use_node24_majors(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("actions/checkout@v6", workflow)
+        self.assertIn("actions/setup-python@v6", workflow)
+        self.assertNotIn("actions/checkout@v4", workflow)
+        self.assertNotIn("actions/setup-python@v5", workflow)
+
     def test_validator_does_not_pin_long_contract_prose(self):
         source = (REPO_ROOT / "skill" / "engineering-workflow" / "scripts" / "validate_skill_repo.py").read_text(encoding="utf-8")
         legacy_name = "REQUIRED_" + "CONTRACT_SNIPPETS"

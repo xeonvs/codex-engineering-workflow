@@ -6,6 +6,7 @@ Use this file for active, blocked, ready-for-closure, or recently completed exec
 
 ## Recently Completed
 
+- [x] 2026-08-13: Completed Remove CI Runtime Deprecation.
 - [x] 2026-08-13: Completed Complete Engineering Workflow 0.6.0 Publication.
 - [x] 2026-08-13: Completed Publish Engineering Workflow 0.6.0.
 - [x] 2026-08-13: Completed Engineering Workflow 0.6.0; [full archived plan](docs/archive/plans/2026-08-13-engineering-workflow-0-6-0.md).
