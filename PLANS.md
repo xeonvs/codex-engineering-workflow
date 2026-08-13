@@ -28,8 +28,8 @@ direct_execution
 | Requirement | Complete outcome | Source | Work queue | Acceptance or validation | Status |
 | --- | --- | --- | --- | --- | --- |
 | REQ-001 | The full intended 0.6.0 diff is committed on a dedicated branch. | Current user request | WQ-01 | Staged diff and commit readback agree. | done |
-| REQ-002 | The branch is pushed and a draft PR is available. | Current user request | WQ-02 | Remote branch and PR readback agree. | in_progress |
-| REQ-003 | GitHub checks complete successfully or their exact failure is reported. | Current user request | WQ-03 | Actions check conclusion readback. | pending |
+| REQ-002 | The branch is pushed and a draft PR is available. | Current user request | WQ-02 | Remote branch and PR readback agree. | done |
+| REQ-003 | GitHub checks complete successfully or their exact failure is reported. | Current user request | WQ-03 | Actions check conclusion readback. | in_progress |
 
 ### Explicit Non-Goals
 
@@ -56,9 +56,9 @@ direct_execution
 
 ### Current Work Queue
 
-- [x] WQ-01 — Revalidated and created the dedicated branch; staged-diff review and commit complete this item atomically. `done`
-- [ ] WQ-02 — Push the committed branch and open the draft PR for REQ-002. `in_progress`
-- [ ] WQ-03 — Wait for GitHub checks and report their exact conclusions for REQ-003. `pending`
+- [x] WQ-01 — Revalidated, reviewed, and committed the implementation. Covers REQ-001. `done`
+- [x] WQ-02 — Pushed the tracked branch and opened draft PR #1. Covers REQ-002. `done`
+- [ ] WQ-03 — Wait for GitHub checks and report their exact conclusions. Covers REQ-003. `in_progress`
 
 ### Locked Decisions
 
@@ -75,6 +75,7 @@ direct_execution
 
 - 2026-08-13: pre-delivery implementation gate previously passed 170 tests with one platform skip; validator passed twice.
 - 2026-08-13: final pre-commit gate passed validator, 170 tests with one platform skip, repeat validator, and `git diff --check`.
+- 2026-08-13: commit `85b33ca` was pushed to `origin/codex/engineering-workflow-0.6.0`; draft PR #1 targets `main`.
 
 ### Risks And Recovery
 
@@ -83,7 +84,7 @@ direct_execution
 
 ### Resume Point
 
-- Continue WQ-02 by pushing the committed branch and opening the draft pull request.
+- Continue WQ-03 by reading GitHub Actions conclusions for PR #1 and the final closure commit.
 
 ### Plan Fidelity Check
 
