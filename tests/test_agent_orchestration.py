@@ -20,6 +20,37 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("polling", text)
         self.assertIn("Do not implement monitoring as a model sleep loop", text)
 
+    def test_completion_wait_is_persistent_and_does_not_wake_model_for_empty_state(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("completion-driven persistent waiter", text)
+        self.assertIn("returns immediately on actual completion", text)
+        self.assertIn("model -> status/write_stdin -> model", text)
+        self.assertIn("Calculate the first check from the next expected meaningful boundary", text)
+        self.assertIn("Blind sleep is not a completion mechanism", text)
+
+    def test_waiter_cell_is_transport_and_terminal_result_is_recoverable(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("waiter cell and its retained output buffer as transport", text)
+        self.assertIn("persist any machine-consumable terminal result atomically", text)
+        self.assertIn("size or digest metadata", text)
+        self.assertIn("whether transport output was truncated", text)
+        self.assertIn("Cell truncation alone does not invalidate", text)
+        self.assertIn("result_unrecoverable", text)
+        self.assertIn("only task-owned children", text)
+
+    def test_ptc_does_not_replace_persistent_waiter(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("does not replace the persistent waiter", text)
+
+    def test_programmatic_route_preserves_direct_judgment_and_failure_boundaries(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("## Programmatic Tool Route", text)
+        self.assertIn("Candidate discovery", text)
+        self.assertIn("prefer one adequate repository-native operation", text)
+        self.assertIn("ask one targeted question", text)
+        self.assertIn("never repeat completed calls", text)
+        self.assertIn("final assistant message as separate outputs", text)
+
     def test_root_owns_shared_state_and_final_synthesis(self):
         text = REFERENCE.read_text(encoding="utf-8")
         self.assertIn("final synthesis", text)

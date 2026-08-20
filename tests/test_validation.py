@@ -15,6 +15,19 @@ validate_target_repo = load_script_module("validate_target_repo")
 
 
 class ValidationTests(unittest.TestCase):
+    def test_execution_reference_preserves_correctness_and_evidence_boundaries(self):
+        reference = (
+            Path(__file__).resolve().parents[1]
+            / "skill/engineering-workflow/references/validation_safety.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Optimize inspection and execution only after correctness", reference)
+        self.assertIn("one bounded reconnaissance pass", reference)
+        self.assertIn("Search first and inspect large sources through focused ranges", reference)
+        self.assertIn("fully ingest every source needed for an exact transformation", reference)
+        self.assertIn("Probe the runtime, tools, packages, and services", reference)
+        self.assertIn("When the required checks pass", reference)
+        self.assertNotIn("normally at least 30 seconds", reference)
+
     def test_mature_instruction_fixture_passes_contract_validation(self):
         result = validate_target_repo.validate_repo(FIXTURES / "mature_repo", mode="read-only")
         self.assertTrue(result["success"], result)

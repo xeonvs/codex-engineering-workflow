@@ -73,7 +73,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertNotIn("## Active Plan:", plan_text)
             self.assertIn("## Recently Completed", plan_text)
             self.assertIn("schema_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
-            self.assertIn("instruction_contract_version: 1", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
+            self.assertIn("instruction_contract_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
             self.assertIn("planning_contract_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
             self.assertTrue(result["validation_result"]["instruction_contract"])
             for relative in ("docs/README.md", "docs/codex/README.md", "docs/engineering/README.md"):
@@ -119,7 +119,9 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(result["agent_action"], "complete_and_validate")
             self.assertEqual(result["mutation_log"][0], "PLANS.md")
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
-            self.assertIn('skill_version: "0.5.1"', manifest.read_text(encoding="utf-8"))
+            manifest_text = manifest.read_text(encoding="utf-8")
+            self.assertIn('skill_version: "0.5.1"', manifest_text)
+            self.assertIn("orchestration_contract_version: 3", manifest_text)
 
     def test_prompt_upgrade_asks_one_question_without_writes_on_conflict(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -263,7 +265,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(existing["current_workflow_version"], "0.4.1")
             self.assertIn("docs/codex/ENGINEERING_WORKFLOW_STATE.yaml", existing["managed_paths"])
 
-    def test_customized_shared_instruction_requires_decision_without_writes(self):
+    def test_customized_v1_instruction_routes_to_model_review_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
@@ -276,11 +278,55 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 agents,
             )
             before = {path: path.read_bytes() for path in protected_paths}
-            result = migrator.apply_migration(root, "0.5.0")
+            result = migrator.execute_prompt_upgrade(root, "0.8.0")
             self.assertFalse(result["success"], result)
-            self.assertEqual(result["update_status"], "question_required")
+            self.assertEqual(result["update_status"], "instruction_migration_required")
+            self.assertEqual(result["agent_action"], "review_instruction_migration")
+            self.assertEqual(result["required_user_questions"], [])
+            self.assertEqual(result["instruction_contract"]["required_contract_version"], 2)
             self.assertEqual(result["mutation_log"], [])
             self.assertEqual({path: path.read_bytes() for path in protected_paths}, before)
+
+    def test_pristine_rendered_0_7_templates_auto_migrate_to_contract_v2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            agents_v2 = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            route_start = agents_v2.index('<!-- ew:route id="long-running-execution"')
+            route_end = agents_v2.index("\n## Route Maintenance", route_start)
+            agents_v1 = (
+                agents_v2[:route_start].rstrip()
+                + "\n\n"
+                + agents_v2[route_end:].lstrip("\n")
+            ).replace("instruction_contract_version: 2", "instruction_contract_version: 1")
+            agents_v1 = agents_v1.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
+
+            principles_v2 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
+            new_rules = principles_v2.index('<!-- ew:invariant id="workflow.efficient-execution" -->')
+            owned_refs = principles_v2.index("## Owned References", new_rules)
+            principles_v1 = principles_v2[:new_rules] + principles_v2[owned_refs:]
+            principles_v1 = principles_v1.replace(
+                "- Long-running execution and waiter integrity: installed `engineering-workflow` skill, `references/agent_orchestration.md`.\n",
+                "",
+            ).replace(
+                "- Validation and execution safety: installed `engineering-workflow` skill, `references/validation_safety.md`.\n",
+                "",
+            )
+
+            (root / "AGENTS.md").write_text(agents_v1, encoding="utf-8")
+            principles = root / common.CANONICAL_FILES["principles"]
+            principles.write_text(principles_v1, encoding="utf-8")
+            self.assertTrue(migrator._is_pristine_legacy("AGENTS.md", agents_v1))
+            self.assertTrue(migrator._is_pristine_legacy(common.CANONICAL_FILES["principles"], principles_v1))
+
+            result = migrator.apply_migration(root, "0.8.0")
+
+            self.assertTrue(result["success"], result)
+            self.assertIn("instruction_contract_version: 2", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("workflow.completion-driven-wait", principles.read_text(encoding="utf-8"))
+            manifest = (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8")
+            self.assertIn('skill_version: "0.8.0"', manifest)
+            self.assertIn("orchestration_contract_version: 3", manifest)
 
     def test_unrelated_active_plan_requires_targeted_question_and_no_write(self):
         with tempfile.TemporaryDirectory() as tmp:

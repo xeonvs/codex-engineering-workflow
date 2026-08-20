@@ -20,7 +20,38 @@ class InstructionContractTests(unittest.TestCase):
         result = contract.check_instruction_contract(FIXTURE)
         self.assertTrue(result["success"], result)
         self.assertEqual(result["status"], "valid")
+        self.assertEqual(result["contract_version"], 2)
+        self.assertEqual(result["required_contract_version"], 2)
+        self.assertEqual(result["missing_required_invariants"], [])
+        self.assertEqual(result["missing_required_routes"], [])
         self.assertEqual(len(result["incidents"]), 4)
+
+    def test_customized_v1_reports_structured_migration_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_fixture(root)
+            agents = root / "AGENTS.md"
+            agents.write_text(
+                agents.read_text(encoding="utf-8")
+                .replace("instruction_contract_version: 2", "instruction_contract_version: 1")
+                .replace(
+                    '<!-- ew:route id="long-running-execution" triggers="long-running commands|builds|tests|polling" owners="docs/engineering/project_principles.md" guards="manual_review:verify completion evidence deadline bounded output and task-owned cleanup" -->\n| long-running-execution | long-running local work | `docs/engineering/project_principles.md` | completion evidence review |\n',
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            principles = root / "docs/engineering/project_principles.md"
+            text = principles.read_text(encoding="utf-8")
+            marker = '<!-- ew:invariant id="workflow.completion-driven-wait" -->'
+            principles.write_text(text[: text.index(marker)].rstrip() + "\n", encoding="utf-8")
+
+            result = contract.check_instruction_contract(root)
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["status"], "instruction_migration_required")
+            self.assertEqual(result["contract_version"], 1)
+            self.assertEqual(result["missing_required_invariants"], ["workflow.completion-driven-wait"])
+            self.assertEqual(result["missing_required_routes"], ["long-running-execution"])
 
     def test_duplicate_invariant_id_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
