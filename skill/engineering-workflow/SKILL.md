@@ -2,7 +2,7 @@
 name: engineering-workflow
 description: Audit, scaffold, verify, update, or migrate a repository engineering workflow while preserving existing document ownership, user scope, validation safety, and durable execution state. Use for AGENTS/PLANS/backlog/pitfalls setup, workflow upgrades, workflow-structure verification, and prompts such as Refresh Loaded Skill, Update Installed Skill, or Upgrade A Target Workflow.
 metadata:
-  version: 0.6.0
+  version: 0.7.0
 ---
 
 # Engineering Workflow
@@ -14,6 +14,7 @@ Use this skill for the workflow layer around a repository. Keep product, domain,
 - `audit_before_edit: required`
 - `plan_schema_version: 2`
 - `instruction_contract_version: 1`
+- `orchestration_contract_version: 2`
 - `repo_change_plan: full_required`
 - `plan_mode_exit_materialization: required`
 - `direct_execution_materialization: required`
@@ -46,7 +47,7 @@ Use this skill for the workflow layer around a repository. Keep product, domain,
 3. For instruction changes, read `references/instruction_lifecycle.md`; preserve one canonical owner per invariant, keep target `AGENTS.md` route-only, and keep pitfalls non-normative.
 4. Use exact canonical paths, the state manifest, or managed-section markers as ownership evidence. Treat unknown files as protected until evidence or user direction resolves ownership.
 5. Read only the canonical reference for the selected mode. Preserve the dominant documentation language and use templates as structure, not as permission to overwrite repository-owned prose.
-6. Keep deterministic work in scripts or tools. Read `references/agent_orchestration.md` only when delegation might provide measurable benefit.
+6. Keep deterministic work in scripts or tools. For a tool-heavy stage or possible delegation, read `references/agent_orchestration.md`, inspect target-repository owners and native automation, and use `scripts/assess_programmatic_stage.py` before any Programmatic Tool Calling stage.
 7. Validate within the selected safety mode. Run repository-authored checks only in a disposable copy unless live execution is explicitly authorized.
 8. Run privacy scanning over all tracked public text, review the diff, reconcile durable state, and close or preserve the exact resume point before handoff.
 
@@ -54,7 +55,7 @@ Use this skill for the workflow layer around a repository. Keep product, domain,
 
 - Planning, traceability, fidelity, reconciliation, and backlog: `references/planning_and_backlog.md`
 - Instruction ownership, routes, incident causes, guards, and retirement: `references/instruction_lifecycle.md`
-- Agent routing and shared-state ownership: `references/agent_orchestration.md`
+- Programmatic tool routing, agent routing, and shared-state ownership: `references/agent_orchestration.md`
 - Current capability-to-model mapping: `references/model_profiles.md`
 - Installed-skill refresh and update: `references/skill_update.md`
 - Target workflow migration: `references/target_workflow_upgrade.md`
@@ -68,6 +69,7 @@ Use this skill for the workflow layer around a repository. Keep product, domain,
 ## Scripts
 
 - `scripts/repo_audit.py`: structured read-only workflow audit.
+- `scripts/assess_programmatic_stage.py`: validate model-established stage facts and render bounded Programmatic Tool Calling instructions.
 - `scripts/plan_bootstrap.py`: plan and artifact-action proposal; read-only mode emits no plan requirement.
 - `scripts/instruction_contract.py`: validate invariant owners, routes, incident links, and guards.
 - `scripts/plan_lifecycle.py`: check or atomically compact/archive a closure-ready plan and maintain indexes.

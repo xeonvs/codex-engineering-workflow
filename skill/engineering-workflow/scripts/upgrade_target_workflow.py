@@ -879,7 +879,7 @@ def _manifest_text(
             f"runtime_agent_config_managed: {'true' if include_agent_config else 'false'}",
             "instruction_contract_version: 1",
             "planning_contract_version: 2",
-            "orchestration_contract_version: 1",
+            "orchestration_contract_version: 2",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -1181,7 +1181,7 @@ def main() -> int:
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--prompt", action="store_true")
-    parser.add_argument("--target-version", default="0.6.0")
+    parser.add_argument("--target-version", default="0.7.0")
     parser.add_argument("--include-agent-config", action="store_true")
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args()

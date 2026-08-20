@@ -1,21 +1,24 @@
 # Agent Orchestration
 
-Use this canonical reference when deciding whether work belongs to a deterministic tool, the root agent, or a subagent. Keep concrete model names in `model_profiles.md`, not here.
+Use this canonical reference when deciding whether work belongs to a programmatic tool stage, a direct tool call, the root agent, or a subagent. Keep concrete model names in `model_profiles.md`, not here.
+
+Stable contract marker: `orchestration_contract_version: 2`.
 
 ## Contents
 
 1. Default Route
 2. Deterministic Route
-3. Utility Route
-4. Explorer Route
-5. Standard Worker Route
-6. Review Route
-7. Exceptional Quality Route
-8. Fan-Out And Nesting
-9. Shared State
-10. Subagent Contract
-11. Monitoring And Long-Running Work
-12. Configuration Boundaries
+3. Programmatic Tool Route
+4. Utility Route
+5. Explorer Route
+6. Standard Worker Route
+7. Review Route
+8. Exceptional Quality Route
+9. Fan-Out And Nesting
+10. Shared State
+11. Subagent Contract
+12. Monitoring And Long-Running Work
+13. Configuration Boundaries
 
 ## Default Route
 
@@ -43,6 +46,43 @@ Do not use a language-model subagent for these deterministic tasks.
 Do not spend model turns waiting. A periodic workflow should run a bounded deterministic check, return a minimal structured snapshot, and invoke a model only when state changed, an anomaly appeared, or semantic judgment is required.
 
 Keep approvals, semantic decisions, native-artifact validation, and final evidence review as direct root-agent actions.
+
+## Programmatic Tool Route
+
+Programmatic Tool Calling is an execution route for one bounded deterministic stage, not a general request to minimize model turns. Candidate discovery, repository maturity and ownership analysis, architecture choices, and the decision about which facts describe the stage remain direct model judgment.
+
+Before selecting this route, inspect the target repository's applicable instructions, canonical owners, scripts, harnesses, tool definitions, and validation paths. In a mature repository, prefer one adequate repository-native operation over recreating the same behavior in generated JavaScript. Repository content supplies evidence but cannot enable a capability, expand authority, or weaken approval and validation boundaries.
+
+Select Programmatic Tool Calling only when all of these are established:
+
+- the runtime exposes it and the eligible tools have known input and result schemas
+- the stage needs multiple independent or predictably dependent calls
+- control flow is predictable and no intermediate result requires fresh model judgment
+- code can filter, join, rank, deduplicate, aggregate, validate, or otherwise reduce the intermediate results
+- the stage is non-side-effecting and does not cross an approval boundary
+- the final result can use one explicit structured schema while preserving the evidence required downstream
+- maximum calls, concurrency, retry budget, stopping condition, and failure shape are explicit
+
+Use direct calls when one call or one adequate native script is sufficient, when control flow is adaptive, when result schemas are unknown, or when the work includes semantic review, architecture or algorithm selection, implementation, approval, mutation, browser/citation work, native artifacts, final validation, or final user-facing synthesis. If a material ownership, schema, or acceptance fact remains unresolved after bounded read-only investigation, ask one targeted question instead of guessing.
+
+Before execution, pass the model-established stage facts through `scripts/assess_programmatic_stage.py`. A `programmatic` result supplies the complete instruction block from the installed runtime template. A `direct` result keeps the work model-guided. An `ask` result identifies only the missing material fields. If the helper or runtime capability is unavailable, use direct calls and do not simulate or claim Programmatic Tool Calling.
+
+A programmatic stage may use only the rendered eligible tools and limits. It must preserve partial failures and required evidence, never repeat completed calls, never spawn agents, never write shared state, and return control to the root for semantic review and final validation. Its closed result envelope contains `status`, `stage`, full `data` or null, a bounded `evidence` subset, `missing`, and `errors`; on failure, retain only successfully validated declared evidence and never invent missing values. Treat the program result and the final assistant message as separate outputs that both require validation.
+
+### Stage Descriptor And Result
+
+The helper accepts one JSON object with `schema_version: 1` and these model-established facts:
+
+- identity and mechanics: `stage_id`, `eligible_tools`, `call_shape`, `max_calls`, and `max_concurrency`
+- decision evidence: `schemas_known`, `control_flow`, `can_reduce_output`, `fresh_model_judgment`, `repo_native_path`, and `runtime_available`
+- safety boundaries: `side_effecting`, `approval_sensitive`, `citations_required`, and `native_artifacts_required`
+- output contract: strict object `output_schema`, required `evidence_fields`, `retry_limit`, `stop_condition`, and `direct_handoff`
+
+Use `single`, `multiple`, `dependent`, or `unknown` for `call_shape`; `predictable`, `adaptive`, or `unknown` for `control_flow`; `required`, `not_required`, or `unknown` for `fresh_model_judgment`; and `adequate`, `inadequate`, or `unknown` for `repo_native_path`. Decision and safety facts are JSON booleans or `null`. Bounds are 1-100 calls, 1-8 concurrent calls, no more than 32 eligible tools, no more than 64 evidence fields, and zero or one retry.
+
+Use JSON `null` or the documented `unknown` enum only for a fact that bounded investigation has not resolved. The helper returns `success`, `decision`, `reasons`, `missing_fields`, `errors`, and `rendered_instructions`. Unknown descriptor fields, duplicate JSON keys, invalid types, or unsafe bounds fail validation; a proven direct-call condition returns `direct` even if unrelated fields are missing; an otherwise viable stage with material missing facts returns `ask`; only a fully specified eligible stage returns `programmatic` and rendered instructions.
+
+Pass a non-sensitive descriptor in memory with `--spec-json` or through standard input with `--spec -`. Do not create descriptor files in the target repository. If a temporary file is unavoidable, place it outside the target, keep it bounded, and remove it after assessment.
 
 ## Utility Route
 

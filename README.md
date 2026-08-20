@@ -2,7 +2,7 @@
 
 Public standalone Codex skill for auditing, scaffolding, validating, updating, and migrating a repository's engineering-workflow layer.
 
-Current skill version: `0.6.0`.
+Current skill version: `0.7.0`.
 
 The skill keeps `AGENTS.md` as a map, `PLANS.md` as durable active execution state, and repository-specific product or domain documents under their existing owners. Repository-changing work always uses a full plan; read-only inspection is the only exception.
 
@@ -117,7 +117,7 @@ Alternate upstreams require explicit confirmation and `--expected-commit` set to
 `Upgrade A Target Workflow` is a natural-language execution prompt. The agent invokes report-first orchestration itself; it applies automatically only when the report has no unresolved conflict, privacy finding, or approval-bound question.
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.6.0. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.7.0. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
 ```
 
 Prompt orchestration backend:
@@ -126,7 +126,7 @@ Prompt orchestration backend:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --prompt \
-  --target-version 0.6.0 \
+  --target-version 0.7.0 \
   --format json
 ```
 
@@ -136,7 +136,7 @@ For an explicitly report-only request, planning remains read-only:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --plan \
-  --target-version 0.6.0 \
+  --target-version 0.7.0 \
   --format json
 ```
 
@@ -146,7 +146,7 @@ Direct apply remains available to the agent after a separately reviewed report:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --apply \
-  --target-version 0.6.0 \
+  --target-version 0.7.0 \
   --format json
 ```
 
@@ -185,6 +185,8 @@ After context compaction, interruption, resume, milestone closure, handoff, or s
 
 One root agent is the default and the only owner of shared workflow state and final synthesis. Deterministic polling, sorting, filtering, aggregation, bounded retry, and status checks belong in tools or scripts. Subagents are reserved for independent bounded work with a concrete output contract and measurable latency, isolation, or coverage benefit.
 
+Bounded tool-heavy work routes through the canonical `agent_orchestration.md` contract and `assess_programmatic_stage.py`. The model establishes the repository-specific facts; the helper validates them and renders instructions only for an eligible stage. The runtime template stays inside the installed skill and is never copied into target `AGENTS.md`, principles, or plan templates.
+
 Current capability-to-model mappings live only in `references/model_profiles.md` and the optional agent templates. Runtime agent templates are never installed into a target repository without an explicit request and `--include-agent-config`.
 
 ## Validation And Privacy
@@ -210,14 +212,14 @@ Use $engineering-workflow to audit this mature repository, preserve every domain
 Target migration:
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.6.0. Run the report and apply it yourself when safe.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.7.0. Run the report and apply it yourself when safe.
 ```
 
 ## Repository Layout
 
 - `skill/engineering-workflow/SKILL.md` — lean runtime router and invariants.
 - `skill/engineering-workflow/references/` — canonical detailed contracts.
-- `skill/engineering-workflow/scripts/` — deterministic audit, validation, update, migration, and sanitization tools.
+- `skill/engineering-workflow/scripts/` — deterministic audit, programmatic-stage assessment, validation, update, migration, and sanitization tools.
 - `skill/engineering-workflow/assets/` — target document and optional agent templates.
 - `tests/` — offline behavioral regression tests.
 - `.github/workflows/ci.yml` — public repository validation.
@@ -234,7 +236,7 @@ The validator checks structural ownership, instruction routing, plan schema and 
 
 ## Versioning And Updates
 
-The project uses semantic versioning. Version 0.6.0 adds the executable instruction graph, a non-normative incident catalog, planning schema v2, checked compact/archive lifecycle, managed documentation indexes, fail-closed instruction migration, and multi-axis command risks. Version 0.5.1 remains the historical baseline for environment-independent validation, prompt-orchestrated refresh/migration, exact alternate-source binding, path-race hardening, and privacy coverage.
+The project uses semantic versioning. Version 0.7.0 adds bounded Programmatic Tool Calling assessment and runtime instruction rendering while keeping mature-repository ownership, mutations, approvals, semantic work, and final validation direct. Version 0.6.0 remains the historical baseline for the executable instruction graph, planning schema v2, checked lifecycle, managed indexes, and fail-closed instruction migration; version 0.5.1 remains the historical baseline for environment-independent validation, prompt-orchestrated refresh/migration, path-race hardening, and privacy coverage.
 
 Historical version records remain valid in completed or migration context. Current-version owners are `SKILL.md`, this README, current update prompts, and active workflow state manifests.
 

@@ -20,6 +20,15 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("polling", text)
         self.assertIn("Do not implement monitoring as a model sleep loop", text)
 
+    def test_programmatic_route_preserves_direct_judgment_and_failure_boundaries(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("## Programmatic Tool Route", text)
+        self.assertIn("Candidate discovery", text)
+        self.assertIn("prefer one adequate repository-native operation", text)
+        self.assertIn("ask one targeted question", text)
+        self.assertIn("never repeat completed calls", text)
+        self.assertIn("final assistant message as separate outputs", text)
+
     def test_root_owns_shared_state_and_final_synthesis(self):
         text = REFERENCE.read_text(encoding="utf-8")
         self.assertIn("final synthesis", text)

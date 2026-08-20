@@ -119,7 +119,9 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(result["agent_action"], "complete_and_validate")
             self.assertEqual(result["mutation_log"][0], "PLANS.md")
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
-            self.assertIn('skill_version: "0.5.1"', manifest.read_text(encoding="utf-8"))
+            manifest_text = manifest.read_text(encoding="utf-8")
+            self.assertIn('skill_version: "0.5.1"', manifest_text)
+            self.assertIn("orchestration_contract_version: 2", manifest_text)
 
     def test_prompt_upgrade_asks_one_question_without_writes_on_conflict(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,7 @@ Use this file as the single canonical owner of current concrete model mappings. 
 
 ## Source Snapshot
 
-Verified against current official guidance on 2026-07-13:
+Verified against current official guidance on 2026-08-16:
 
 - `https://developers.openai.com/api/docs/guides/latest-model`
 - `https://learn.chatgpt.com/docs/agent-configuration/subagents`

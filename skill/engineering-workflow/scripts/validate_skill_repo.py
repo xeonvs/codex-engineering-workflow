@@ -34,6 +34,7 @@ REQUIRED_PATHS = (
     "skill/engineering-workflow/agents/openai.yaml",
     "skill/engineering-workflow/scripts/common.py",
     "skill/engineering-workflow/scripts/repo_audit.py",
+    "skill/engineering-workflow/scripts/assess_programmatic_stage.py",
     "skill/engineering-workflow/scripts/plan_bootstrap.py",
     "skill/engineering-workflow/scripts/validate_target_repo.py",
     "skill/engineering-workflow/scripts/validate_skill_repo.py",
@@ -55,6 +56,7 @@ REQUIRED_PATHS = (
     "skill/engineering-workflow/assets/templates/PLANS.md.tmpl",
     "skill/engineering-workflow/assets/templates/TASKS_BACKLOG.md.tmpl",
     "skill/engineering-workflow/assets/templates/ENGINEERING_WORKFLOW_STATE.yaml.tmpl",
+    "skill/engineering-workflow/assets/templates/PROGRAMMATIC_TOOL_STAGE.md.tmpl",
     "skill/engineering-workflow/assets/templates/indexes/docs_README.md.tmpl",
     "skill/engineering-workflow/assets/templates/indexes/codex_README.md.tmpl",
     "skill/engineering-workflow/assets/templates/indexes/engineering_README.md.tmpl",
@@ -82,6 +84,7 @@ SKILL_REQUIRED_MARKERS = (
     "audit_before_edit: required",
     "plan_schema_version: 2",
     "instruction_contract_version: 1",
+    "orchestration_contract_version: 2",
     "repo_change_plan: full_required",
     "plan_mode_exit_materialization: required",
     "direct_execution_materialization: required",
@@ -113,6 +116,7 @@ README_REQUIRED_HEADINGS = (
 CANONICAL_OWNER_MARKERS = {
     "## Full Active Plan Schema": "skill/engineering-workflow/references/planning_and_backlog.md",
     "## Deterministic Route": "skill/engineering-workflow/references/agent_orchestration.md",
+    "## Programmatic Tool Route": "skill/engineering-workflow/references/agent_orchestration.md",
     "## Capability Mapping": "skill/engineering-workflow/references/model_profiles.md",
     "## Refresh Loaded Skill Decision": "skill/engineering-workflow/references/skill_update.md",
     "## Installation Types": "skill/engineering-workflow/references/skill_update.md",
@@ -481,6 +485,48 @@ def _validate_agent_profiles(repo_root: Path) -> list[str]:
     return issues
 
 
+def _validate_programmatic_tool_assets(repo_root: Path) -> list[str]:
+    issues: list[str] = []
+    template_path = (
+        repo_root
+        / "skill/engineering-workflow/assets/templates/PROGRAMMATIC_TOOL_STAGE.md.tmpl"
+    )
+    if template_path.exists():
+        text = template_path.read_text(encoding="utf-8")
+        expected = {
+            "stage_id",
+            "eligible_tools",
+            "max_calls",
+            "max_concurrency",
+            "result_schema",
+            "evidence_fields",
+            "stop_condition",
+            "retry_limit",
+            "direct_handoff",
+        }
+        found = re.findall(r"\{\{\s*([a-z_]+)\s*\}\}", text)
+        if set(found) != expected or len(found) != len(expected):
+            issues.append(
+                f"Programmatic tool template placeholders mismatch: expected {sorted(expected)}, found {sorted(found)}"
+            )
+        if text.count("<tool_orchestration>") != 1 or text.count("</tool_orchestration>") != 1:
+            issues.append("Programmatic tool template must contain one orchestration wrapper")
+        for api_only in ('"type": "programmatic_tool_calling"', "allowed_callers", "previous_response_id"):
+            if api_only in text:
+                issues.append(f"Programmatic tool template contains API integration field: {api_only}")
+    for relative in (
+        "skill/engineering-workflow/assets/templates/AGENTS.md.tmpl",
+        "skill/engineering-workflow/assets/templates/PLANS.md.tmpl",
+        "skill/engineering-workflow/assets/templates/project_principles.md.tmpl",
+    ):
+        path = repo_root / relative
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            if "Programmatic Tool Calling" in text or "assess_programmatic_stage.py" in text:
+                issues.append(f"Target repository template duplicates runtime PTC policy: {relative}")
+    return issues
+
+
 def _validate_active_versions(repo_root: Path, version: str | None) -> list[str]:
     if not version:
         return []
@@ -551,6 +597,7 @@ def validate_skill_repo(repo_root: Path) -> dict:
     errors.extend(_validate_source_indexes(root))
     errors.extend(_validate_canonical_owners(root))
     errors.extend(_validate_agent_profiles(root))
+    errors.extend(_validate_programmatic_tool_assets(root))
     errors.extend(_validate_active_versions(root, version))
     errors.extend(_validate_openai_yaml(root))
     errors.extend(_check_forbidden_paths(root))
