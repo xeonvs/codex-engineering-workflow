@@ -23,6 +23,7 @@ This file is local guidance for agents developing this repository. It is not par
 | Target workflow upgrade | `references/target_workflow_upgrade.md`, audit/common/upgrader code and tests | Report/apply/prompt migration matrix |
 | Validation, command execution, or privacy | `references/validation_safety.md`, `references/privacy_and_sanitization.md`, related scripts and tests | Safety matrix and public-tree scan |
 | Agent orchestration or model mapping | `references/agent_orchestration.md`, `references/model_profiles.md`, agent templates and tests | Ownership/model-profile validation |
+| Long-running execution or execution-efficiency rules | `references/agent_orchestration.md`, then `references/validation_safety.md` | Completion/result-integrity and affected behavioral tests |
 | Version or release contract | `SKILL.md`, root `README.md`, upgrader defaults, state template, CI and version tests | Full gate and active-version search |
 
 ## Working Contract

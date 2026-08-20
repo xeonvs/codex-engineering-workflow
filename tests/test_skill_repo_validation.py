@@ -14,7 +14,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.7.0"
+CURRENT_VERSION = "0.8.0"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -25,7 +25,15 @@ class SkillRepoValidationTests(unittest.TestCase):
         if (REPO_ROOT / "PLANS.md").exists():
             shutil.copy2(REPO_ROOT / "PLANS.md", target / "PLANS.md")
         shutil.copytree(REPO_ROOT / ".github", target / ".github")
+        shutil.copytree(REPO_ROOT / ".agents", target / ".agents")
+        shutil.copytree(REPO_ROOT / ".claude-plugin", target / ".claude-plugin")
         shutil.copytree(REPO_ROOT / "docs", target / "docs")
+        shutil.copytree(REPO_ROOT / "plugins", target / "plugins")
+        shutil.copytree(
+            REPO_ROOT / "scripts",
+            target / "scripts",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
         shutil.copytree(
             REPO_ROOT / "skill",
             target / "skill",

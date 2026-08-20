@@ -1,0 +1,16 @@
+{
+  "name": "xeonvs-engineering",
+  "owner": {
+    "name": "xeonvs"
+  },
+  "description": "Public engineering workflow plugins maintained by xeonvs.",
+  "plugins": [
+    {
+      "name": "engineering-workflow",
+      "source": "./plugins/engineering-workflow",
+      "description": "Audit, plan, migrate, validate, and maintain repository engineering workflows.",
+      "category": "Developer Tools",
+      "homepage": "https://github.com/xeonvs/codex-engineering-workflow"
+    }
+  ]
+}

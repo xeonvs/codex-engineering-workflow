@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -63,6 +64,39 @@ def commit_version(repo: Path, version: str) -> str:
 
 
 class UpdateInstalledSkillTests(unittest.TestCase):
+    def test_plugin_managed_install_returns_marketplace_handoff_without_cache_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = root / "cache" / "engineering-workflow"
+            install = plugin / "skills" / "engineering-workflow"
+            write_candidate(root / "source", "0.8.0")
+            shutil.copytree(root / "source" / SOURCE_PATH, install)
+            (plugin / ".codex-plugin").mkdir(parents=True)
+            (plugin / ".claude-plugin").mkdir(parents=True)
+            (plugin / ".codex-plugin" / "plugin.json").write_text("{}\n", encoding="utf-8")
+            (plugin / ".claude-plugin" / "plugin.json").write_text("{}\n", encoding="utf-8")
+            before = {path.relative_to(plugin): path.read_bytes() for path in plugin.rglob("*") if path.is_file()}
+
+            result = updater.update_installation(
+                install,
+                "https://invalid.example.test/should-not-be-fetched",
+                str(SOURCE_PATH),
+                "main",
+                apply=True,
+            )
+
+            after = {path.relative_to(plugin): path.read_bytes() for path in plugin.rglob("*") if path.is_file()}
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["installation_type"], "plugin_managed")
+            self.assertEqual(result["update_status"], "marketplace_handoff")
+            self.assertEqual(result["recommended_action"], "marketplace_update")
+            self.assertEqual(result["next_agent_action"], "update_plugin_through_marketplace")
+            self.assertFalse(result["marketplace_handoff"]["direct_cache_replacement_allowed"])
+            self.assertEqual(result["marketplace_handoff"]["platforms"], ["codex", "claude"])
+            self.assertIsInstance(result["plugin_root"], str)
+            json.dumps(result)
+            self.assertEqual(before, after)
+
     def test_check_mode_reports_candidate_without_mutating_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
