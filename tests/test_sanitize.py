@@ -9,6 +9,7 @@ from test_support import load_script_module
 
 
 sanitize_output = load_script_module("sanitize_output")
+common = load_script_module("common")
 
 
 class SanitizeTests(unittest.TestCase):
@@ -114,6 +115,14 @@ class SanitizeTests(unittest.TestCase):
         text = CountForbiddenText("first\n/" + "home" + "/sample/private\n")
         findings = sanitize_output.scan_text(text)
         self.assertTrue(any(item["line"] == 2 for item in findings))
+
+    def test_internal_fingerprints_bind_line_endings_but_public_scan_hides_them(self):
+        assignment = "pass" + "word" + "=" + "synthetic-placeholder"
+        with_newline = common.scan_privacy_text_with_fingerprints(assignment + "\n")
+        without_newline = common.scan_privacy_text_with_fingerprints(assignment)
+        self.assertNotEqual(with_newline[0]["line_sha256"], without_newline[0]["line_sha256"])
+        public = common.scan_privacy_text(assignment + "\n")
+        self.assertTrue(all(set(item) == {"type", "line"} for item in public))
 
     def test_detects_deny_terms(self):
         issues = sanitize_output.scan_text("forbidden project name", deny_terms=["forbidden"])

@@ -14,7 +14,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.8.0"
+CURRENT_VERSION = "0.8.1"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -218,10 +218,27 @@ class SkillRepoValidationTests(unittest.TestCase):
             root = Path(tmp)
             self._copy_repo_subset(root)
             path = root / "README.md"
-            path.write_text(path.read_text(encoding="utf-8").replace("## Refresh Loaded Skill", "## Reload Notes"), encoding="utf-8")
+            path.write_text(path.read_text(encoding="utf-8").replace("## Refresh a loaded skill", "## Reload notes"), encoding="utf-8")
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
-            self.assertTrue(any("Refresh Loaded Skill" in item for item in result["errors"]))
+            self.assertTrue(any("Refresh a loaded skill" in item for item in result["errors"]))
+
+    def test_installation_for_both_agents_precedes_workflow_internals(self):
+        text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        install = text.index("## Install with Codex or Claude Code")
+        quick_start = text.index("## Quick start")
+        internals = text.index("## Planning and backlog lifecycle")
+        self.assertLess(install, quick_start)
+        self.assertLess(quick_start, internals)
+        self.assertIn("codex plugin add engineering-workflow@xeonvs-engineering", text)
+        self.assertIn("claude plugin install engineering-workflow@xeonvs-engineering", text)
+        self.assertIn("/engineering-workflow:engineering-workflow", text)
+
+    def test_runtime_router_explains_privacy_approval_without_value_access(self):
+        text = (REPO_ROOT / "skill/engineering-workflow/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("request_privacy_review_approval", text)
+        self.assertIn("do not open the flagged lines", text)
+        self.assertIn("Never approve on the user's behalf", text)
 
     def test_disabled_implicit_invocation_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

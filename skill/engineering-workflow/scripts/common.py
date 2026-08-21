@@ -200,6 +200,17 @@ PRIVACY_PATTERNS = {
     "url_with_credentials": re.compile(r"https?://[^\s/@:]+:[^\s/@]+@[^\s/]+", re.IGNORECASE),
 }
 
+PRIVACY_REVIEW_CONTRACT_VERSION = 1
+PRIVACY_REVIEW_ELIGIBLE_TYPES = frozenset(
+    {
+        "credential_like_assignment",
+        "environment_secret_assignment",
+        "bearer_token",
+        "email",
+        "internal_hostname",
+    }
+)
+
 
 def _iter_relevant_files(root: Path) -> Iterable[Path]:
     for path in root.rglob("*"):
@@ -278,27 +289,50 @@ def iter_public_text_files(root: Path) -> Iterable[Path]:
             yield path
 
 
-def scan_privacy_text(text: str) -> list[dict[str, int | str]]:
-    """Return categories and line numbers without echoing sensitive values."""
+def scan_privacy_text_with_fingerprints(text: str) -> list[dict[str, int | str]]:
+    """Return private fingerprints for internal comparison without matched values."""
     issues: list[dict[str, int | str]] = []
-    lines = text.splitlines() or [""]
+    lines = text.splitlines(keepends=True) or [""]
     for name, pattern in PRIVACY_PATTERNS.items():
         for line_number, line in enumerate(lines, start=1):
             for _match in pattern.finditer(line):
-                issues.append({"type": name, "line": line_number})
+                issues.append(
+                    {
+                        "type": name,
+                        "line": line_number,
+                        "line_sha256": hashlib.sha256(line.encode("utf-8")).hexdigest(),
+                    }
+                )
     return issues
 
 
-def scan_public_tree(root: Path) -> list[dict[str, int | str]]:
+def scan_privacy_text(text: str) -> list[dict[str, int | str]]:
+    """Return categories and line numbers without echoing values or fingerprints."""
+    return [
+        {"type": issue["type"], "line": issue["line"]}
+        for issue in scan_privacy_text_with_fingerprints(text)
+    ]
+
+
+def scan_public_tree_with_fingerprints(root: Path) -> list[dict[str, int | str]]:
+    """Return internal finding fingerprints for exact snapshot comparison."""
     issues: list[dict[str, int | str]] = []
     for path in iter_public_text_files(root):
         text = _read_text(path)
         if not text:
             continue
         rel = path.relative_to(root).as_posix()
-        for issue in scan_privacy_text(text):
+        for issue in scan_privacy_text_with_fingerprints(text):
             issues.append({"path": rel, **issue})
     return issues
+
+
+def scan_public_tree(root: Path) -> list[dict[str, int | str]]:
+    """Return public finding coordinates without echoing values or fingerprints."""
+    return [
+        {"type": issue["type"], "path": issue["path"], "line": issue["line"]}
+        for issue in scan_public_tree_with_fingerprints(root)
+    ]
 
 
 def _classify_text_language(text: str) -> str:
