@@ -1,42 +1,122 @@
 # Codex Engineering Workflow
 
-Public Codex and Claude Code skill for auditing, scaffolding, validating, updating, and migrating a repository's engineering-workflow layer.
+`engineering-workflow` is a public skill for auditing, setting up, validating, updating, and safely migrating the engineering-workflow layer of a repository. It works with Codex and Claude Code.
 
-Current skill version: `0.8.0`.
+Current skill version: `0.8.1`.
 
-The skill keeps `AGENTS.md` as a map, `PLANS.md` as durable active execution state, and repository-specific product or domain documents under their existing owners. Repository-changing work always uses a full plan; read-only inspection is the only exception.
+The skill uses `AGENTS.md` as a short map, `PLANS.md` as durable execution state, and leaves product, architecture, operations, security, and other repository-owned documentation with its existing owners. Any repository change starts with a full plan; read-only inspection is the only exception.
 
-## Quick Start
+## Install with Codex or Claude Code
 
-1. Install or link `skill/engineering-workflow` in one of the supported skill-discovery locations.
-2. Start a new Codex turn if the running client has not detected the installation change.
-3. Invoke `$engineering-workflow` and name the repository outcome you want.
+This repository is the public Git marketplace `xeonvs-engineering`. It is an independently maintained marketplace, not an official OpenAI or Anthropic catalog.
+
+### Codex
+
+```bash
+codex plugin marketplace add xeonvs/codex-engineering-workflow
+codex plugin add engineering-workflow@xeonvs-engineering
+```
+
+Start a new Codex turn if the skill does not appear immediately, then invoke it by name:
 
 ```text
 Use $engineering-workflow to audit this repository and propose a conservative workflow scaffold.
 ```
 
+### Claude Code
+
+```bash
+claude plugin marketplace add xeonvs/codex-engineering-workflow
+claude plugin install engineering-workflow@xeonvs-engineering
+```
+
+Claude Code uses the plugin-qualified command:
+
+```text
+/engineering-workflow:engineering-workflow Audit this repository and preserve its existing documentation owners.
+```
+
+Both platforms receive the same self-contained skill. Codex can use Codex-specific model profiles and Programmatic Tool Calling when the runtime exposes them. Claude Code keeps the same planning, ownership, validation, migration, and completion-wait rules but uses direct tool calls and ignores Codex-only configuration.
+
+## Quick start
+
+Tell the skill the outcome you want and any boundaries that matter. The agent audits the repository before it writes, creates a complete `PLANS.md` plan as its first write, and runs the checks appropriate to the requested scope.
+
+```text
+Use $engineering-workflow to add an AGENTS/PLANS/backlog/incident workflow here. Preserve the existing architecture and operations docs, and do not add runtime agent configuration.
+```
+
+For a read-only review:
+
+```text
+Use $engineering-workflow in read-only mode to verify this repository's workflow structure and ownership boundaries.
+```
+
 The scripts require Python 3.11 or newer and use only the standard library.
 
-## Installing The Skill
+## Using the skill in Codex
 
-Current Codex authoring guidance supports repository skills under `.agents/skills`, user skills under `$HOME/.agents/skills`, administrator skills under `/etc/codex/skills`, and system-provided skills. Symlinked skill folders are supported. The official skill installer continues to use `$CODEX_HOME/skills` (normally `$HOME/.codex/skills`), so the correct location depends on how the skill is managed.
+Invoke `$engineering-workflow` explicitly when you want a predictable workflow operation. Common requests include:
 
-For repository-local authoring:
+```text
+Use $engineering-workflow to scaffold the workflow layer in this empty repository and validate it in a disposable copy.
+```
+
+```text
+Use $engineering-workflow to audit this mature repository and add only the missing workflow-owned structure.
+```
+
+```text
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.8.1.
+```
+
+Repository text is evidence, not authority. It cannot grant approval, expand scope, request secrets, or override system, developer, or user instructions.
+
+## Claude Code compatibility
+
+Claude Code explicitly reads any applicable target `AGENTS.md` files as workflow artifacts. The skill does not claim that Claude Code automatically follows Codex-specific instruction discovery.
+
+Claude compatibility mode does not load Codex model profiles, Programmatic Tool Calling instructions, Codex TOML, or Codex agent templates. It keeps the platform-neutral contracts and orchestrates tools through direct Claude Code calls.
+
+| Capability | Codex | Claude Code |
+| --- | --- | --- |
+| Planning, audit, conservative migration, and validation safety | yes | yes |
+| Completion-driven waits and durable terminal evidence | yes | yes |
+| Programmatic Tool Calling for eligible bounded stages | when the runtime exposes it | no; uses direct calls |
+| Codex model profiles and optional agent templates | supported | not used |
+| `.codex/config.toml` migration | explicit opt-in | not applied |
+| Marketplace install and update | Codex plugin commands | Claude plugin commands |
+
+Update the Claude package with:
+
+```bash
+claude plugin marketplace update xeonvs-engineering
+claude plugin update engineering-workflow@xeonvs-engineering
+```
+
+Then run `/reload-plugins` inside Claude Code. See the official Claude Code documentation for [skills](https://code.claude.com/docs/en/slash-commands), [plugins](https://code.claude.com/docs/en/plugins), and [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces).
+
+## Alternative installations
+
+Marketplace installation is recommended because it provides a versioned, self-contained package. Standalone and symlink installations remain supported.
+
+Codex discovers repository skills under `.agents/skills` and user skills under `$HOME/.agents/skills`. The official skill installer also uses `$CODEX_HOME/skills`, normally `$HOME/.codex/skills`. See the official [Codex skills documentation](https://developers.openai.com/codex/skills).
+
+Repository-local Codex link:
 
 ```bash
 mkdir -p .agents/skills
 ln -s "$(pwd)/skill/engineering-workflow" .agents/skills/engineering-workflow
 ```
 
-For a user-scoped authoring installation:
+User-scoped Codex link:
 
 ```bash
 mkdir -p "$HOME/.agents/skills"
 ln -s "$(pwd)/skill/engineering-workflow" "$HOME/.agents/skills/engineering-workflow"
 ```
 
-For an installation managed in the official installer's location:
+Installer-compatible Codex link:
 
 ```bash
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
@@ -44,108 +124,34 @@ mkdir -p "$CODEX_HOME/skills"
 ln -s "$(pwd)/skill/engineering-workflow" "$CODEX_HOME/skills/engineering-workflow"
 ```
 
-Do not infer the active installation from a similarly named directory. Refresh and update operations require the exact loaded skill path.
+For a standalone Claude Code project installation, copy the canonical `skill/engineering-workflow` directory to `.claude/skills/engineering-workflow`, with `SKILL.md` directly inside that directory.
 
-## Marketplace Installation
+Do not guess which similarly named directory is active. Refresh and update operations must resolve the exact skill path loaded by the client.
 
-`xeonvs-engineering` is this repository's public Git marketplace. It is not a submission to an official OpenAI or Anthropic catalog. The same self-contained `engineering-workflow` package serves Codex and Claude Code, while each platform uses its own manifest.
+## Refresh a loaded skill
 
-Codex installation:
+`Refresh Loaded Skill` asks the agent to resolve the active installation, compare it with the canonical upstream, perform a safe update when the structured result allows one, and reread the active `SKILL.md`.
 
-```bash
-codex plugin marketplace add xeonvs/codex-engineering-workflow
-codex plugin add engineering-workflow@xeonvs-engineering
+```text
+Use $engineering-workflow to Refresh Loaded Skill. Resolve the exact active installation, check the canonical upstream, perform any safe required update, then reread and report the active path and version.
 ```
 
-Codex update or reinstall:
+The agent uses `recommended_action`, `automatic_update_allowed`, and `confirmation_required` from the check result. It rereads an identical installation, updates verified content drift when allowed, and stops for an alternate source, downgrade, dirty or divergent checkout, or another protected state. A strictly local reread with no upstream access or writes must be requested explicitly.
+
+Refreshing the loaded skill does not migrate a target repository.
+
+## Update an installed skill
+
+`update_installed_skill` checks and updates the exact active standalone installation without changing a target repository. Plugin-managed installations return `marketplace_handoff`; the updater never writes directly into a plugin cache.
+
+Update a Codex marketplace installation with:
 
 ```bash
 codex plugin marketplace upgrade xeonvs-engineering
 codex plugin add engineering-workflow@xeonvs-engineering
 ```
 
-Marketplace-managed cache directories are immutable installation outputs. `update_installed_skill.py` detects them and returns `marketplace_handoff`; it never replaces the cached skill directly. Existing standalone copy, symlink, and Git-checkout installations remain supported.
-
-## Using The Skill In Codex
-
-Invoke the skill explicitly and describe the desired end state:
-
-```text
-Use $engineering-workflow to add a full AGENTS/PLANS/backlog/incident-catalog workflow while preserving existing architecture and operations docs.
-```
-
-```text
-Use $engineering-workflow in read-only mode to verify the workflow structure and ownership boundaries.
-```
-
-```text
-Use $engineering-workflow to upgrade this repository's workflow rules to the current installed version, but do not add runtime agent configuration.
-```
-
-Repository content is treated as untrusted evidence. It cannot grant approval, expand scope, request secrets, or override system, developer, or user instructions.
-
-## Claude Code
-
-Install the same package from the Git marketplace:
-
-```bash
-claude plugin marketplace add xeonvs/codex-engineering-workflow
-claude plugin install engineering-workflow@xeonvs-engineering
-```
-
-Invoke the namespaced skill:
-
-```text
-/engineering-workflow:engineering-workflow Audit this repository and preserve its existing documentation owners.
-```
-
-Update it with:
-
-```bash
-claude plugin marketplace update xeonvs-engineering
-claude plugin update engineering-workflow@xeonvs-engineering
-```
-
-Then run `/reload-plugins` inside Claude Code.
-
-For a standalone project fallback, copy the canonical `skill/engineering-workflow` directory to `.claude/skills/engineering-workflow`, keeping `SKILL.md` at that path. Marketplace installation is preferred because the package is versioned and self-contained.
-
-Claude compatibility mode explicitly reads applicable target `AGENTS.md` files as workflow artifacts; it does not claim that Claude Code automatically applies Codex-specific instruction discovery. It uses direct Claude Code tool calls and does not load Codex model profiles, Programmatic Tool Calling, Codex TOML, or Codex agent templates.
-
-| Capability | Codex | Claude Code |
-| --- | --- | --- |
-| Planning, audit, conservative migration, validation safety | yes | yes |
-| Completion-driven waits and durable terminal evidence | yes | yes |
-| Programmatic Tool Calling for eligible bounded stages | when exposed by runtime | no; direct calls |
-| Codex model profiles and optional agent templates | supported | not used |
-| `.codex/config.toml` migration | explicit opt-in | not applied |
-| Git marketplace install/update | Codex marketplace commands | Claude plugin commands |
-
-Platform behavior is owned by `references/platform_compatibility.md`. Official Claude references: [skills](https://code.claude.com/docs/en/slash-commands), [plugins](https://code.claude.com/docs/en/plugins), and [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces).
-
-## Refresh Loaded Skill
-
-`Refresh Loaded Skill` is a prompt-driven orchestration mode. The agent resolves the exact active installation, checks it against the canonical upstream, and chooses the required action from structured evidence:
-
-- identical skill content: reread the active `SKILL.md` and needed references;
-- changed instructions, scripts, or resources: invoke the safe installed-skill updater itself, then reread the updated installation;
-- alternate source, downgrade, dirty/divergent checkout, or another protected state: stop and ask only for the required decision.
-
-Major or minor version drift always triggers the update check. Patch drift also updates when content changed. Codex normally detects changed skills automatically; restart or start a new task only if the refreshed instructions do not appear.
-
-```text
-Use $engineering-workflow to Refresh Loaded Skill. Inspect the exact active installation and canonical upstream, invoke any safe required update yourself, then reread and report the active path and version.
-```
-
-For a strictly local reread with no upstream access or writes, say so explicitly. `Refresh Loaded Skill` never implies target-repository migration.
-
-## Update Installed Skill
-
-`update_installed_skill` is a distinct lifecycle operation. It checks a trusted upstream and safely updates the exact active symlink target, Git checkout, or copied installation without changing a target repository. Plugin-managed installations instead receive the marketplace handoff described above.
-
-The agent runs check mode first and parses `recommended_action`, `automatic_update_allowed`, `confirmation_required`, instruction/content drift, and SemVer drift. These commands are the deterministic backend, not steps the user must manually copy after giving a resolved prompt.
-
-Check backend:
+For maintainers or automation, the standalone backend starts in check mode:
 
 ```bash
 python3 skill/engineering-workflow/scripts/update_installed_skill.py \
@@ -157,156 +163,135 @@ python3 skill/engineering-workflow/scripts/update_installed_skill.py \
   --format json
 ```
 
-Apply backend when the check allows automatic update:
+When the result permits an automatic update, rerun it with `--apply`. Alternate upstreams require explicit confirmation and an `--expected-commit` equal to the full commit returned by check mode. Credential-bearing URLs and plain-HTTP canonical aliases are refused; downgrades require `--allow-downgrade`.
 
-```bash
-python3 skill/engineering-workflow/scripts/update_installed_skill.py \
-  --install-path <exact-active-skill-path> \
-  --source-repo https://github.com/xeonvs/codex-engineering-workflow \
-  --source-path skill/engineering-workflow \
-  --ref main \
-  --apply \
-  --format json
-```
+## Upgrade a target workflow
 
-Alternate upstreams require explicit confirmation and `--expected-commit` set to the full commit returned by check mode, so a moved ref cannot replace reviewed content. Credential-bearing URL components and plain-HTTP canonical aliases are refused. Downgrades require `--allow-downgrade`. After a successful update, the agent resolves and rereads the active installation; restart is only a fallback when Codex does not surface the detected change.
-
-## Upgrade A Target Workflow
-
-`Upgrade A Target Workflow` is a natural-language execution prompt. The agent invokes report-first orchestration itself; it applies automatically only when the report has no unresolved conflict, privacy finding, or approval-bound question.
+`Upgrade A Target Workflow` tells the agent to run a report-first guarded migration, not to hand the user a list of backend commands. It applies automatically only when ownership, privacy, and approval checks are resolved.
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.8.0. Run the report first, apply it yourself when safe, and ask only if the report returns a required decision.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.8.1. Run the report first, apply it when safe, and ask only when the report requires a user decision.
 ```
 
-Prompt orchestration backend:
+The maintainer/automation backend is:
 
 ```bash
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --prompt \
-  --target-version 0.8.0 \
+  --target-version 0.8.1 \
   --format json
 ```
 
-For an explicitly report-only request, planning remains read-only:
+Use `--plan` for an explicitly read-only report. Direct `--apply` is available after a separately reviewed report. Runtime agent configuration stays untouched unless `--include-agent-config` is explicit.
 
-```bash
-python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
-  --repo <target-repository> \
-  --plan \
-  --target-version 0.8.0 \
-  --format json
-```
+The migration creates or updates the target's full active `PLANS.md` plan before any other migration write. Known pristine 0.7 instruction templates migrate automatically. A customized version-1 instruction graph returns `agent_action: review_instruction_migration` without writing a new version stamp; the agent preserves equivalent rules or adds only missing invariants and asks the user only for a real ownership conflict.
 
-Direct apply remains available to the agent after a separately reviewed report:
+### Privacy review during migration
 
-```bash
-python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
-  --repo <target-repository> \
-  --apply \
-  --target-version 0.8.0 \
-  --format json
-```
+Some repositories intentionally keep synthetic credentials, addresses, or internal hostnames in tests and fixtures. Version 0.8.1 can continue only after the user approves the exact value-free review token for that one migration snapshot.
 
-The migration creates or updates the target's full active `PLANS.md` plan before other migration edits. Runtime agent configuration remains untouched unless `--include-agent-config` is explicit. Existing TOML is structurally merged; unknown keys and custom profiles are preserved, and the exact configuration diff is reported.
+When the result returns `agent_action: request_privacy_review_approval`, the agent must:
 
-Known pristine 0.7 instruction templates migrate automatically by saved fingerprint. A customized version-1 instruction graph returns `instruction_migration_required` and `agent_action: review_instruction_migration` without stamping 0.8.0. The model preserves semantically equivalent rules or adds only missing invariants/routes, and asks the user only when evidence reveals a real ownership conflict.
+1. Show only each candidate's category, repository-relative path, and line number, plus the aggregate `review_token`.
+2. Never open the reported line, quote the match, reveal a line digest, or decide that the value is safe on the user's behalf.
+3. Explain that any content, line, path, duplicate count, current version, or target-version change invalidates the token.
+4. Ask for explicit approval and make no target writes while waiting.
+5. After approval, rerun the same operation with `--approve-privacy-review <exact-token>`.
 
-## Operating Modes
+A hard privacy category has `status: hard_block`, no token, and no approval path. The token is not an allowlist: it is kept only for the current process, creates no baseline file, and cannot approve a real secret. The final scan still rolls back if a finding appears or changes during apply.
+
+## Operating modes
 
 Repository workflow modes:
 
-- `greenfield_scaffold` — initialize the workflow layer in an empty or nearly empty repository.
-- `conservative_merge` — preserve existing owners while adding only missing workflow structure.
-- `read_only_verify` — inspect without executing repository-authored code or writing state.
-- `disposable_copy_verify` — run builds, tests, linters, or repository commands in an isolated copy.
-- `upgrade_target_workflow` — prompt-orchestrate, plan, or apply a versioned workflow migration.
+- `greenfield_scaffold` initializes the workflow layer in an empty or nearly empty repository.
+- `conservative_merge` preserves existing owners and adds only missing workflow structure.
+- `read_only_verify` inspects without running repository code or writing state.
+- `disposable_copy_verify` runs repository checks in an isolated copy.
+- `upgrade_target_workflow` plans or performs a versioned target migration.
 
 Skill lifecycle modes:
 
-- `refresh_loaded_skill` — check the canonical candidate, automatically update when safe content drift requires it, then reread the active installation.
-- `update_installed_skill` — retrieve, validate, back up, and update the active installation.
+- `refresh_loaded_skill` checks, safely updates when needed, and rereads the loaded skill.
+- `update_installed_skill` retrieves, validates, backs up, and updates a standalone installation.
 
-If a request could mean either self-update or target migration, the skill investigates first and asks one targeted question rather than combining them.
+If a request could mean either skill update or target migration, the skill investigates first and asks one focused question instead of combining the two operations.
 
-## Planning And Backlog Lifecycle
+## Planning and backlog lifecycle
 
-Every repository-changing task must materialize a full active plan in `PLANS.md` before implementation, tests, configuration, templates, or workflow documentation change. There is no lightweight exception. Plan Mode is optional: an approved Plan Mode plan is materialized as the first write after exit, while direct execution derives and materializes the same full schema as its first write.
+Every repository-changing task materializes a complete active plan in `PLANS.md` before implementation, tests, configuration, templates, or workflow documentation change. Plan Mode is optional; the schema and first-write requirement are not.
 
-Planning schema v2 includes stable requirement IDs, source-to-queue-to-validation traceability, user decisions, risks and recovery, fidelity and reconciliation checks, a checked `ready_for_closure` transition, post-close delivery boundaries, and the exact first unfinished action. Use `plan_lifecycle.py` to compact or archive; a manual `Status: done` edit is not closure.
+Planning schema v2 records stable requirement IDs, traceability from source to work and validation, user decisions, recovery, risks, fidelity and reconciliation checks, an explicit closure transition, post-close delivery boundaries, and the first unfinished action. `plan_lifecycle.py` performs compact or archive closure; changing only `Status` is not closure.
 
-Target `AGENTS.md` is a route table. Normative invariants have one canonical owner, while `AGENT_EXECUTION_PITFALLS.md` is a non-normative incident catalog that records cause, owner, route, guard, evidence, and retirement. `instruction_contract.py` checks this graph before target workflow version stamping.
+Target `AGENTS.md` is a route table. Each normative invariant has one canonical owner, while `AGENT_EXECUTION_PITFALLS.md` is a non-normative incident catalog. Instruction contract v2 requires the efficient-execution, evidence-driven-completion, and completion-driven-wait invariants and the routes that make them reachable.
 
-Instruction contract v2 requires `workflow.efficient-execution`, `workflow.evidence-driven-completion`, and `workflow.completion-driven-wait`, plus the repository-change and long-running-execution routes that make their owner reachable.
+After compaction, interruption, resume, milestone closure, handoff, or session change, the agent rereads `PLANS.md`, inspects the working tree, and reconciles requirements, queue, backlog, validation, and status before continuing.
 
-Every documentation directory created by the skill receives a navigation-only managed README. Archive directories are created lazily, every archived record is indexed exactly once, and existing unmarked README prose is never overwritten automatically.
+## Agent orchestration
 
-After context compaction, interruption, resume, milestone closure, handoff, or session change, the agent reads `PLANS.md`, inspects changes since its last update, and reconciles requirements, queue, backlog, validation, working tree, and statuses before more code changes. The 0.4.1 reconciliation and stale-completed-state protections remain in force.
+One root agent is the default and the sole owner of shared workflow state and final synthesis. Subagents are used only for independent bounded work with a clear output contract and a measurable benefit.
 
-## Agent Orchestration
+Long-running local work uses one completion-driven persistent waiter. Complete logs and machine-readable results go to private task-owned ignored artifacts because waiter-cell output can be truncated or lost. Completion readback verifies process state and result integrity independently and returns a bounded terminal summary as soon as the process exits. Fallback polling starts at the next expected meaningful boundary and backs off without waking the model for unchanged state.
 
-One root agent is the default and the only owner of shared workflow state and final synthesis. Deterministic polling, sorting, filtering, aggregation, bounded retry, and status checks belong in tools or scripts. Subagents are reserved for independent bounded work with a concrete output contract and measurable latency, isolation, or coverage benefit.
+Programmatic Tool Calling is limited to deterministic, schema-bounded stages whose allowed tools, reduced output, concurrency, retry limit, and stopping condition are known in advance. Architecture choices, semantic review, approvals, destructive or external writes, and adaptive workflows remain direct model-guided work. The skill never claims exact subscription or token savings; the intended benefit is fewer redundant model turns and less repeated tool-result context.
 
-Long-running local work uses one completion-driven persistent waiter. Full logs and machine-consumable results live in private task-owned ignored artifacts; waiter-cell output is only transport and may be truncated. Completion readback verifies process state and result integrity independently, returns a bounded summary immediately on exit, and reports `waiter_lost` or `result_unrecoverable` rather than claiming success without evidence. Fallback polling starts at the next expected meaningful boundary and backs off without waking the model for unchanged state.
+## Validation and privacy
 
-Bounded tool-heavy work routes through the canonical `agent_orchestration.md` contract and `assess_programmatic_stage.py`. The model establishes the repository-specific facts; the helper validates them and renders instructions only for an eligible stage. The runtime template stays inside the installed skill and is never copied into target `AGENTS.md`, principles, or plan templates.
+Read-only verification permits bounded diagnostics that do not write, execute repository code, use the network, or expose sensitive output. Stronger checks run in a disposable copy with a minimal credential-free environment, timeout, bounded network policy, and cleanup.
 
-Current capability-to-model mappings live only in `references/model_profiles.md` and the optional agent templates. Runtime agent templates are never installed into a target repository without an explicit request and `--include-agent-config`.
+The public-tree scan covers tracked text—including files under otherwise ignored directory names—and non-ignored untracked public text. Public results contain only category, relative path, and line number. Matched values and internal per-line fingerprints never enter agent output.
 
-## Validation And Privacy
+Release validation also uses a dedicated secret scanner with complete redaction. Reports stay in a permission-restricted task-owned temporary directory, and the agent reviews only safe rule/path/line/ref metadata. A real published secret requires authorized history cleanup and a clean rescan; a documented synthetic fixture is not treated as a real credential merely because it matches a heuristic.
 
-Strict read-only verification permits bounded diagnostics whose structured risk result has no writes, repository-code execution, network, or sensitive output. Normal-file `sed -n`, `head`, and search are allowed; write/execute modes and raw secret-file output are not. Repository-authored scripts, project tests, package-manager commands, plugins, generators, and shell chaining remain outside the read-only boundary. Stronger checks run in a disposable copy with a minimal credential-free environment, timeout, bounded network policy, and cleanup.
+## Example workflows
 
-The public scan covers all tracked text, including root plans, README, skill files, templates, tests, and CI. It reports only category, path, and line—not detected values. Historical version mentions are allowed in clearly historical or completed contexts; active version owners must agree.
-
-## Example Workflows
-
-Greenfield:
+Greenfield repository:
 
 ```text
-Use $engineering-workflow to scaffold the workflow layer in this empty repository and validate it in a disposable copy.
+Use $engineering-workflow to scaffold the workflow layer here and validate it in a disposable copy.
 ```
 
 Mature repository:
 
 ```text
-Use $engineering-workflow to audit this mature repository, preserve every domain-document owner, and add only missing workflow-owned structure.
+Use $engineering-workflow to audit this mature repository, preserve every existing document owner, and add only missing workflow-owned structure.
 ```
 
 Target migration:
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to 0.8.0. Run the report and apply it yourself when safe.
+Use $engineering-workflow to Upgrade A Target Workflow here to 0.8.1. Run the report and apply it when safe.
 ```
 
-## Repository Layout
+## Repository layout
 
-- `skill/engineering-workflow/SKILL.md` — lean runtime router and invariants.
-- `skill/engineering-workflow/references/` — canonical detailed contracts.
-- `skill/engineering-workflow/scripts/` — deterministic audit, programmatic-stage assessment, validation, update, migration, and sanitization tools.
-- `skill/engineering-workflow/assets/` — target document and optional agent templates.
-- `scripts/build_marketplace_package.py` — deterministic package builder and byte-drift check.
-- `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` — public Git marketplace catalogs.
-- `plugins/engineering-workflow` — generated self-contained dual-platform package; never edit it manually.
-- `tests/` — offline behavioral regression tests.
-- `.github/workflows/ci.yml` — public repository validation.
+- `skill/engineering-workflow/SKILL.md` is the canonical runtime router.
+- `skill/engineering-workflow/references/` owns the detailed contracts.
+- `skill/engineering-workflow/scripts/` contains deterministic audit, validation, update, migration, and sanitization tools.
+- `skill/engineering-workflow/assets/` contains target-document and optional agent templates.
+- `scripts/build_marketplace_package.py` builds the dual-platform package deterministically.
+- `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` are the two public catalogs.
+- `plugins/engineering-workflow` is generated from the canonical skill and must not be edited by hand.
+- `tests/` contains offline behavioral regressions.
+- `.github/workflows/ci.yml` is the public repository gate.
 
 ## Validating
 
 ```bash
-python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-python3 -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
 python3 scripts/build_marketplace_package.py --check
 git diff --check
 ```
 
-The validator checks structural ownership, instruction routing, plan schema and closure markers, archive indexes, active version consistency, model-profile ownership, marketplace manifests and byte identity, public privacy, parseable metadata and templates, and the absence of generated cache artifacts. Release validation also runs the plugin-creator validator in an ephemeral `uv` environment, strict Claude plugin/marketplace validation, and `claude plugin tag --dry-run` from a clean committed tree.
+The validator checks ownership, instruction routing, plan structure, archive indexes, active versions, marketplace manifests and byte identity, public privacy, parseable metadata and templates, and generated-artifact hygiene. Release checks also run the plugin-creator validator in an ephemeral environment, strict Claude plugin and marketplace validation, `claude plugin tag --dry-run`, and a fully redacted history scan.
 
-## Versioning And Updates
+## Versioning and updates
 
-The project uses semantic versioning. Version 0.8.0 adds loss-resistant completion-driven waits, correctness-first execution discipline, instruction contract v2 migration, Claude Code compatibility, and the deterministic dual marketplace. Version 0.7.0 remains the historical baseline for bounded Programmatic Tool Calling assessment and runtime instruction rendering; version 0.6.0 remains the historical baseline for the executable instruction graph and planning schema v2.
+The project uses semantic versioning. Version 0.8.1 adds exact, user-approved synthetic-fixture privacy review without exposing candidate values to the agent. Version 0.8.0 introduced loss-resistant completion-driven waits, correctness-first execution discipline, instruction contract v2 migration, Claude Code compatibility, and the deterministic dual marketplace. Version 0.7.0 is the historical baseline for bounded Programmatic Tool Calling assessment and runtime instruction rendering.
 
-Historical version records remain valid in completed or migration context. Current-version owners are `SKILL.md`, this README, current update prompts, and active workflow state manifests.
+Historical version records remain valid in completed plans, archives, and migration tests. Current-version owners are `SKILL.md`, this README, current update prompts, active workflow state manifests, and the generated plugin manifests.
 
 Canonical upstream: [xeonvs/codex-engineering-workflow](https://github.com/xeonvs/codex-engineering-workflow).

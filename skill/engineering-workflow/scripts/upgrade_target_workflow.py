@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import difflib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -18,11 +20,13 @@ from typing import Any
 from common import (
     CANONICAL_FILES,
     IGNORED_DIRS,
+    PRIVACY_REVIEW_CONTRACT_VERSION,
+    PRIVACY_REVIEW_ELIGIBLE_TYPES,
     STATE_MANIFEST_PATH,
     audit_repo,
     find_stale_completed_state,
     scan_privacy_text,
-    scan_public_tree,
+    scan_public_tree_with_fingerprints,
     validate_plan_schema,
 )
 from instruction_contract import check_instruction_contract
@@ -85,6 +89,135 @@ def _validate_target_version(value: str) -> str:
     if not TARGET_VERSION_RE.fullmatch(value):
         raise MigrationConflict("invalid_target_version", "Target workflow version must be valid SemVer")
     return value
+
+
+PrivacyFingerprint = tuple[str, str, int, str]
+
+
+def _public_privacy_finding(finding: dict[str, int | str]) -> dict[str, int | str]:
+    return {
+        "type": finding["type"],
+        "path": finding["path"],
+        "line": finding["line"],
+    }
+
+
+def _privacy_fingerprint(finding: dict[str, int | str]) -> PrivacyFingerprint:
+    return (
+        str(finding["type"]),
+        str(finding["path"]),
+        int(finding["line"]),
+        str(finding["line_sha256"]),
+    )
+
+
+def _privacy_review_token(
+    findings: Counter[PrivacyFingerprint],
+    current_workflow_version: str,
+    target_version: str,
+) -> str:
+    canonical_findings = [list(fingerprint) for fingerprint in sorted(findings.elements())]
+    payload = {
+        "contract_version": PRIVACY_REVIEW_CONTRACT_VERSION,
+        "current_workflow_version": current_workflow_version,
+        "target_version": target_version,
+        "findings": canonical_findings,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"privacy-review-v{PRIVACY_REVIEW_CONTRACT_VERSION}:{digest}"
+
+
+def _evaluate_privacy_review(
+    root: Path,
+    current_workflow_version: str,
+    target_version: str,
+    approved_token: str | None,
+) -> tuple[dict[str, Any], list[dict[str, int | str]], Counter[PrivacyFingerprint]]:
+    detailed = scan_public_tree_with_fingerprints(root)
+    eligible = [
+        finding for finding in detailed if finding["type"] in PRIVACY_REVIEW_ELIGIBLE_TYPES
+    ]
+    hard = [
+        finding for finding in detailed if finding["type"] not in PRIVACY_REVIEW_ELIGIBLE_TYPES
+    ]
+    candidates = [_public_privacy_finding(finding) for finding in eligible]
+    empty: Counter[PrivacyFingerprint] = Counter()
+    if not detailed:
+        return (
+            {
+                "contract_version": PRIVACY_REVIEW_CONTRACT_VERSION,
+                "status": "not_required",
+                "review_token": None,
+                "candidates": [],
+                "approved_count": 0,
+            },
+            [],
+            empty,
+        )
+    if hard:
+        return (
+            {
+                "contract_version": PRIVACY_REVIEW_CONTRACT_VERSION,
+                "status": "hard_block",
+                "review_token": None,
+                "candidates": candidates,
+                "approved_count": 0,
+            },
+            [_public_privacy_finding(finding) for finding in detailed],
+            empty,
+        )
+
+    fingerprints = Counter(_privacy_fingerprint(finding) for finding in eligible)
+    expected_review = _privacy_review_token(
+        fingerprints,
+        current_workflow_version,
+        target_version,
+    )
+    if approved_token is not None and hmac.compare_digest(approved_token, expected_review):
+        return (
+            {
+                "contract_version": PRIVACY_REVIEW_CONTRACT_VERSION,
+                "status": "approved",
+                "review_token": None,
+                "candidates": candidates,
+                "approved_count": sum(fingerprints.values()),
+            },
+            [],
+            fingerprints,
+        )
+    status = "token_mismatch" if approved_token is not None else "approval_required"
+    return (
+        {
+            "contract_version": PRIVACY_REVIEW_CONTRACT_VERSION,
+            "status": status,
+            "review_token": expected_review,
+            "candidates": candidates,
+            "approved_count": 0,
+        },
+        candidates,
+        empty,
+    )
+
+
+def _new_privacy_findings(
+    root: Path,
+    approved: Counter[PrivacyFingerprint],
+) -> list[dict[str, int | str]]:
+    """Return only findings not covered by the exact approved pre-apply multiset."""
+    remaining = approved.copy()
+    blocking: list[dict[str, int | str]] = []
+    for finding in scan_public_tree_with_fingerprints(root):
+        if finding["type"] not in PRIVACY_REVIEW_ELIGIBLE_TYPES:
+            blocking.append(_public_privacy_finding(finding))
+            continue
+        fingerprint = _privacy_fingerprint(finding)
+        if remaining[fingerprint] > 0:
+            remaining[fingerprint] -= 1
+        else:
+            blocking.append(_public_privacy_finding(finding))
+    return blocking
 
 
 def _directory_identity(path: Path) -> tuple[int, int]:
@@ -561,7 +694,12 @@ def _proposed_changes(root: Path, include_agent_config: bool) -> list[dict[str, 
     return changes
 
 
-def build_migration_report(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
+def build_migration_report(
+    repo: Path,
+    target_version: str,
+    include_agent_config: bool = False,
+    approved_privacy_review: str | None = None,
+) -> dict[str, Any]:
     target_version = _validate_target_version(target_version)
     root = repo.resolve()
     if not root.is_dir():
@@ -632,18 +770,23 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
     touched = {item["path"] for item in proposed}
     ownership = audit["ownership"]
     protected = sorted(set(ownership["protected"] + ownership["unknown"] + ownership["external_source_of_truth"]))
-    privacy_findings = scan_public_tree(root)
+    current_workflow_version = (
+        _manifest_version(root / STATE_MANIFEST_PATH)
+        if not _first_symlink_component(root, STATE_MANIFEST_PATH)
+        else None
+    ) or "unknown"
+    privacy_review, privacy_findings, _approved_fingerprints = _evaluate_privacy_review(
+        root,
+        current_workflow_version,
+        target_version,
+        approved_privacy_review,
+    )
     return {
         "success": not any(item["type"] in blocking_types or item.get("requires_decision") == "true" for item in conflicts),
         "mode": "plan",
         "repository": ".",
         "target_version": target_version,
-        "current_workflow_version": (
-            _manifest_version(root / STATE_MANIFEST_PATH)
-            if not _first_symlink_component(root, STATE_MANIFEST_PATH)
-            else None
-        )
-        or "unknown",
+        "current_workflow_version": current_workflow_version,
         "detected_topology": _topology(root),
         "ownership": ownership,
         "managed_paths": ownership["managed"],
@@ -654,6 +797,7 @@ def build_migration_report(repo: Path, target_version: str, include_agent_config
         "instruction_contract": instruction_contract,
         "archive_indexes": audit["archive_indexes"],
         "privacy_findings": privacy_findings,
+        "privacy_review": privacy_review,
         "proposed_changes": proposed,
         "untouched_files": sorted(path for path in protected if path not in touched),
         "required_user_questions": questions,
@@ -898,10 +1042,31 @@ def _manifest_text(
     return "\n".join(lines) + "\n"
 
 
-def apply_migration(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
+def apply_migration(
+    repo: Path,
+    target_version: str,
+    include_agent_config: bool = False,
+    approved_privacy_review: str | None = None,
+) -> dict[str, Any]:
     root = repo.resolve()
     expected_root_identity = _directory_identity(root)
-    report = build_migration_report(root, target_version, include_agent_config)
+    report = build_migration_report(
+        root,
+        target_version,
+        include_agent_config,
+        approved_privacy_review,
+    )
+    privacy_review, privacy_findings, approved_fingerprints = _evaluate_privacy_review(
+        root,
+        report["current_workflow_version"],
+        target_version,
+        approved_privacy_review,
+    )
+    report = {
+        **report,
+        "privacy_findings": privacy_findings,
+        "privacy_review": privacy_review,
+    }
     if report["required_user_questions"]:
         return {**report, "success": False, "mode": "apply", "update_status": "question_required", "mutation_log": []}
     if report["privacy_findings"]:
@@ -1056,7 +1221,7 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
             write("PLANS.md", _close_migration_plan(read("PLANS.md"), target_version))
 
             secure.assert_identity()
-            final_privacy_findings = scan_public_tree(root)
+            final_privacy_findings = _new_privacy_findings(root, approved_fingerprints)
             secure.assert_identity()
             if final_privacy_findings:
                 raise MigrationConflict(
@@ -1096,9 +1261,19 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
                 if rollback_failed
                 else ("privacy_review_required" if code == "privacy_review_required" else "rolled_back")
             )
+            failure_privacy_review = report["privacy_review"]
+            failure_privacy_findings = final_privacy_findings or report["privacy_findings"]
+            if code == "privacy_review_required" and not rollback_failed:
+                failure_privacy_review, failure_privacy_findings, _ignored = _evaluate_privacy_review(
+                    root,
+                    report["current_workflow_version"],
+                    target_version,
+                    None,
+                )
             return {
                 **report,
-                "privacy_findings": final_privacy_findings or report["privacy_findings"],
+                "privacy_findings": failure_privacy_findings,
+                "privacy_review": failure_privacy_review,
                 "success": False,
                 "mode": "apply",
                 "update_status": update_status,
@@ -1132,9 +1307,19 @@ def apply_migration(repo: Path, target_version: str, include_agent_config: bool 
         }
 
 
-def execute_prompt_upgrade(repo: Path, target_version: str, include_agent_config: bool = False) -> dict[str, Any]:
+def execute_prompt_upgrade(
+    repo: Path,
+    target_version: str,
+    include_agent_config: bool = False,
+    approved_privacy_review: str | None = None,
+) -> dict[str, Any]:
     """Run report-first migration for an authorized natural-language target-upgrade request."""
-    report = build_migration_report(repo, target_version, include_agent_config)
+    report = build_migration_report(
+        repo,
+        target_version,
+        include_agent_config,
+        approved_privacy_review,
+    )
     if report["required_user_questions"]:
         return {
             **report,
@@ -1147,12 +1332,20 @@ def execute_prompt_upgrade(repo: Path, target_version: str, include_agent_config
             "mutation_log": [],
         }
     if report["privacy_findings"]:
+        approval_required = report["privacy_review"]["status"] in {
+            "approval_required",
+            "token_mismatch",
+        }
         return {
             **report,
             "success": False,
             "mode": "prompt",
             "update_status": "privacy_review_required",
-            "agent_action": "report_privacy_findings",
+            "agent_action": (
+                "request_privacy_review_approval"
+                if approval_required
+                else "report_privacy_findings"
+            ),
             "report_reviewed": True,
             "mutation_log": [],
         }
@@ -1199,11 +1392,20 @@ def execute_prompt_upgrade(repo: Path, target_version: str, include_agent_config
             "mutation_log": [],
         }
 
-    applied = apply_migration(repo, target_version, include_agent_config)
+    applied = apply_migration(
+        repo,
+        target_version,
+        include_agent_config,
+        approved_privacy_review,
+    )
     if applied.get("update_status") == "question_required":
         agent_action = "ask_targeted_question"
     elif applied.get("update_status") == "privacy_review_required":
-        agent_action = "report_privacy_findings"
+        agent_action = (
+            "request_privacy_review_approval"
+            if applied.get("privacy_review", {}).get("status") in {"approval_required", "token_mismatch"}
+            else "report_privacy_findings"
+        )
     elif applied.get("success"):
         agent_action = "complete_and_validate"
     else:
@@ -1226,18 +1428,37 @@ def main() -> int:
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--prompt", action="store_true")
-    parser.add_argument("--target-version", default="0.8.0")
+    parser.add_argument("--target-version", default="0.8.1")
     parser.add_argument("--include-agent-config", action="store_true")
+    parser.add_argument(
+        "--approve-privacy-review",
+        help="Approve only the exact value-free privacy review token returned by a prior report.",
+    )
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args()
 
     try:
         if args.prompt:
-            result = execute_prompt_upgrade(Path(args.repo), args.target_version, args.include_agent_config)
+            result = execute_prompt_upgrade(
+                Path(args.repo),
+                args.target_version,
+                args.include_agent_config,
+                args.approve_privacy_review,
+            )
         elif args.apply:
-            result = apply_migration(Path(args.repo), args.target_version, args.include_agent_config)
+            result = apply_migration(
+                Path(args.repo),
+                args.target_version,
+                args.include_agent_config,
+                args.approve_privacy_review,
+            )
         else:
-            result = build_migration_report(Path(args.repo), args.target_version, args.include_agent_config)
+            result = build_migration_report(
+                Path(args.repo),
+                args.target_version,
+                args.include_agent_config,
+                args.approve_privacy_review,
+            )
     except MigrationConflict as exc:
         selected_mode = "prompt" if args.prompt else ("apply" if args.apply else "plan")
         result = {"success": False, "mode": selected_mode, "errors": [{"code": exc.code, "message": str(exc)}]}

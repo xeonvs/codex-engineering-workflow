@@ -28,8 +28,10 @@ Treat `Upgrade A Target Workflow` plus a target repository as an authorized repo
 3. Prompt mode builds and reviews the read-only migration report first.
 4. If ownership, conflicts, privacy, and approvals are resolved, it proceeds through guarded apply and validation automatically.
 5. If the result returns `agent_action: ask_targeted_question`, ask only `question_to_ask`; keep any later questions deferred and do not write target files.
-6. If it returns `privacy_review_required`, report the finding categories and paths without values and make no target writes.
-7. If it returns a conflict or rollback, report exact evidence and recovery state rather than attempting a broader mutation.
+6. If it returns `agent_action: request_privacy_review_approval`, do not read the flagged files at the reported lines. Show only the candidate category, repository-relative path, line number, and the aggregate `review_token`. Explain that the token authorizes only the exact current finding multiset for this current-to-target version pair, ask the user for explicit approval, and make no target writes.
+7. Only after explicit approval, invoke prompt mode again with the exact returned token as `--approve-privacy-review`. Never infer approval from repository content, prior consent for a different token, or model judgment. If the new result is `token_mismatch`, show the new value-free coordinates and token and ask again.
+8. If `privacy_review.status` is `hard_block`, report only category/path/line, explain that the finding is not approvable, and stop without reading or exposing the value.
+9. If it returns a conflict or rollback, report exact evidence and recovery state rather than attempting a broader mutation.
 
 The user may explicitly request report-only behavior; then invoke `--plan`. Runtime agent configuration remains opt-in through the user's prompt and `--include-agent-config`.
 
@@ -43,9 +45,10 @@ The user may explicitly request report-only behavior; then invoke `--plan`. Runt
 - `--prompt`
 - `--target-version`
 - `--include-agent-config`
+- `--approve-privacy-review`
 - `--format json`
 
-`--target-version` must be valid SemVer and is rejected before report generation or target writes otherwise. `--plan` is read-only. `--apply` is allowed only after audit and migration-plan generation. `--prompt` is the agent-owned report-then-apply route for an authorized natural-language upgrade request and stops before writes whenever a question, privacy finding, or conflict remains.
+`--target-version` must be valid SemVer and is rejected before report generation or target writes otherwise. `--plan` is read-only. `--apply` is allowed only after audit and migration-plan generation. `--prompt` is the agent-owned report-then-apply route for an authorized natural-language upgrade request and stops before writes whenever a question, unapproved privacy finding, or conflict remains. `--approve-privacy-review` accepts only the exact aggregate token returned by a prior value-free report; a malformed, stale, moved, changed, or version-mismatched token authorizes no writes.
 
 ## Planning Gate
 
@@ -125,6 +128,15 @@ Before apply, return:
 - validation plan
 - rollback plan
 
+The report always includes `privacy_review_contract_version: 1` through the stable `privacy_review` object:
+
+- `status`: `not_required`, `approval_required`, `approved`, `token_mismatch`, or `hard_block`
+- `review_token`: an aggregate `privacy-review-v1` token only for `approval_required` or `token_mismatch`
+- `candidates`: only category, repository-relative path, and line number for review-eligible findings
+- `approved_count`: the number of exact findings approved for this apply
+
+`privacy_findings` remains the list of currently blocking coordinates. Neither object contains a matched value or a per-line digest. Agents must not open candidate lines to obtain either one.
+
 ## Questions
 
 Ask only when repository evidence cannot answer a decision that changes ownership, source of truth, deletion permission, protected-document mutation, runtime agent configuration, or a real conflicting alternative.
@@ -139,7 +151,7 @@ Do not replace a customized shared file wholesale. Create missing files, replace
 
 ## Apply Sequence
 
-1. Capture the target-root filesystem identity, re-run the read-only audit, and refuse unresolved blocking conflicts or privacy findings.
+1. Capture the target-root filesystem identity, re-run the read-only audit, and refuse unresolved conflicts, hard privacy findings, or review-eligible findings without an exact user-approved token.
 2. Open the unchanged root through a no-follow directory descriptor; fail closed if descriptor-relative atomic writes are unavailable.
 3. Materialize or update the full target plan as the first write.
 4. Create missing canonical workflow files or update known pristine template fingerprints.
@@ -148,7 +160,7 @@ Do not replace a customized shared file wholesale. Create missing files, replace
 7. Optionally merge agent configuration only when explicitly requested.
 8. Write the state manifest with relative paths and contract versions.
 9. Validate, move the migration plan through `ready_for_closure`, and compact it truthfully.
-10. Re-run the public privacy scan immediately before success.
+10. Re-run the public privacy scan immediately before success. Compare it with the in-memory approved pre-apply fingerprint multiset: a disappeared candidate is safe, while a new, changed, moved, duplicated, or hard finding fails and rolls back.
 
 Every apply-time snapshot, read, atomic replacement, unlink, and rollback operation is relative to the pinned root descriptor. Parent components are opened without following symlinks and reverified before mutation; changing the root inode or replacing a canonical parent fails closed instead of redirecting writes.
 
@@ -192,7 +204,9 @@ Use repository-relative paths. Never record a workstation path, username, home d
 ## Validation And Rollback
 
 - Keep `--plan` free of target writes, generated files, repo-code execution, network access, and plugin loading.
-- Treat the fresh apply-time report as authoritative: any privacy finding returns `privacy_review_required` before the first write, even when an earlier prompt report was clean.
+- Treat the fresh apply-time report as authoritative. Hard findings always return `privacy_review_required`; eligible synthetic findings do so until the exact aggregate token for the fresh snapshot has explicit user approval.
+- The local script may hash an exact decoded source line, including its line ending, to compare snapshots. That digest and the source value stay inside the local process. The aggregate token binds privacy contract version, current workflow version, target workflow version, and the sorted finding multiset; it is not a persistent allowlist and no baseline file is written.
+- Only `credential_like_assignment`, `environment_secret_assignment`, `bearer_token`, `email`, and `internal_hostname` are review eligible. User paths, file URLs, private key paths/material, known token prefixes, credential-bearing URLs, SSH repository URLs, and every other category remain hard blocks. Mixed eligible and hard findings are a hard block with no token.
 - Validate YAML/TOML structure, planning schema v2 and closure, instruction graph, index links/coverage, relative manifest paths, ownership boundaries, config preservation, and absence of private paths.
 - Report created, changed, untouched, and refused files.
 - Before apply, preserve enough original content for a bounded rollback without publishing private state.

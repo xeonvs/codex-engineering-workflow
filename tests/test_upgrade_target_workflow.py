@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -35,6 +36,16 @@ def snapshot(root: Path) -> dict[str, bytes]:
         for path in root.rglob("*")
         if path.is_file()
     }
+
+
+def synthetic_review_lines() -> list[str]:
+    return [
+        "pass" + "word" + "=" + "synthetic-placeholder",
+        "SERVICE_" + "TOKEN" + "=" + "synthetic-placeholder",
+        "person" + "@" + "example.test",
+        "service" + ".internal.test",
+        "Bearer" + " " + "synthetic-placeholder",
+    ]
 
 
 class UpgradeTargetWorkflowTests(unittest.TestCase):
@@ -158,6 +169,197 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(result["mutation_log"], [])
             self.assertFalse((root / "PLANS.md").exists())
             self.assertEqual(readme.read_text(encoding="utf-8"), original)
+
+    def test_synthetic_findings_require_value_free_explicit_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            values = synthetic_review_lines()
+            (root / "fixtures.md").write_text("\n".join(values) + "\n", encoding="utf-8")
+            before = snapshot(root)
+
+            result = migrator.execute_prompt_upgrade(root, "0.8.1")
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["agent_action"], "request_privacy_review_approval")
+            self.assertEqual(result["privacy_review"]["status"], "approval_required")
+            self.assertRegex(result["privacy_review"]["review_token"], r"^privacy-review-v1:[0-9a-f]{64}$")
+            self.assertEqual(
+                {item["type"] for item in result["privacy_review"]["candidates"]},
+                set(common.PRIVACY_REVIEW_ELIGIBLE_TYPES),
+            )
+            self.assertTrue(
+                all(set(item) == {"type", "path", "line"} for item in result["privacy_review"]["candidates"])
+            )
+            serialized = json.dumps(result, sort_keys=True)
+            for value in values:
+                self.assertNotIn(value, serialized)
+            self.assertNotIn("line_sha256", serialized)
+            self.assertEqual(snapshot(root), before)
+            self.assertFalse((root / "PLANS.md").exists())
+
+    def test_exact_review_token_allows_migration_and_preserves_fixture_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
+            expected = fixture.read_bytes()
+            report = migrator.build_migration_report(root, "0.8.1")
+            review_value = report["privacy_review"]["review_token"]
+
+            result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["privacy_review"]["status"], "approved")
+            self.assertEqual(
+                result["privacy_review"]["approved_count"],
+                len(report["privacy_review"]["candidates"]),
+            )
+            self.assertEqual(result["privacy_findings"], [])
+            self.assertEqual(fixture.read_bytes(), expected)
+            self.assertFalse(any("privacy-review" in path.name.lower() for path in root.rglob("*")))
+
+    def test_new_changed_and_moved_findings_invalidate_review_token_without_writes(self):
+        mutations = {
+            "new": lambda path: path.write_text(
+                path.read_text(encoding="utf-8") + "second" + "@" + "example.test\n",
+                encoding="utf-8",
+            ),
+            "changed": lambda path: path.write_text(
+                path.read_text(encoding="utf-8").replace("person" + "@", "other" + "@"),
+                encoding="utf-8",
+            ),
+            "moved": lambda path: path.write_text(
+                "header\n" + path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                make_target(root)
+                fixture = root / "fixtures.md"
+                fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
+                review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+                mutate(fixture)
+                before = snapshot(root)
+
+                result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+
+                self.assertFalse(result["success"])
+                self.assertEqual(result["privacy_review"]["status"], "token_mismatch")
+                self.assertEqual(result["mutation_log"], [])
+                self.assertEqual(snapshot(root), before)
+
+    def test_malformed_and_version_bound_tokens_never_authorize_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
+            report = migrator.build_migration_report(root, "0.8.1")
+            review_value = report["privacy_review"]["review_token"]
+
+            malformed = migrator.apply_migration(root, "0.8.1", approved_privacy_review="not-a-review-token")
+            self.assertEqual(malformed["privacy_review"]["status"], "token_mismatch")
+            self.assertEqual(malformed["mutation_log"], [])
+
+            other_target = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
+            self.assertEqual(other_target["privacy_review"]["status"], "token_mismatch")
+            self.assertEqual(other_target["mutation_log"], [])
+            self.assertNotEqual(
+                review_value,
+                migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"],
+            )
+
+            manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
+            manifest.write_text(
+                "schema_version: 2\nskill_version: \"0.8.0\"\nmanaged_paths: []\n",
+                encoding="utf-8",
+            )
+            current_version_review = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            self.assertNotEqual(review_value, current_version_review)
+            self.assertFalse((root / "PLANS.md").exists())
+
+    def test_stale_token_is_ignored_when_review_is_not_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+
+            result = migrator.apply_migration(
+                root,
+                "0.8.1",
+                approved_privacy_review="privacy-review-v1:" + ("0" * 64),
+            )
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["privacy_review"]["status"], "not_required")
+            self.assertEqual(result["privacy_review"]["approved_count"], 0)
+
+    def test_disappeared_review_candidate_needs_no_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            fixture.write_text("person" + "@" + "example.test\n", encoding="utf-8")
+            review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            fixture.unlink()
+
+            result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["privacy_review"]["status"], "not_required")
+
+    def test_hard_privacy_category_cannot_be_approved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
+            eligible_review = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            fixture.write_text(
+                fixture.read_text(encoding="utf-8") + "/" + "Users" + "/sample/private\n",
+                encoding="utf-8",
+            )
+            before = snapshot(root)
+
+            result = migrator.execute_prompt_upgrade(
+                root,
+                "0.8.1",
+                approved_privacy_review=eligible_review,
+            )
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["privacy_review"]["status"], "hard_block")
+            self.assertIsNone(result["privacy_review"]["review_token"])
+            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+
+    def test_finding_introduced_during_approved_apply_triggers_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
+            review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            original_final_scan = migrator._new_privacy_findings
+
+            def introduce_before_final_scan(scan_root, approved):
+                (root / "late-note.md").write_text("late" + "@" + "example.test\n", encoding="utf-8")
+                return original_final_scan(scan_root, approved)
+
+            with mock.patch.object(migrator, "_new_privacy_findings", side_effect=introduce_before_final_scan):
+                result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "privacy_review_required")
+            self.assertEqual(result["privacy_review"]["status"], "approval_required")
+            self.assertTrue((root / "PLANS.md").is_file())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").exists())
+            self.assertTrue((root / "late-note.md").is_file())
 
     def test_direct_apply_stops_without_writes_on_privacy_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
