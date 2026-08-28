@@ -237,6 +237,14 @@ def check_archive_indexes(root: Path, *, relative_dirs: set[str] | None = None) 
             continue
         readme = directory / "README.md"
         readme_rel = readme.relative_to(root).as_posix()
+        expected = _index_targets(root, relative_dir)
+        if (
+            relative_dir in {"docs/archive", "docs/archive/plans", "docs/archive/backlog"}
+            and not expected
+            and not readme.exists()
+            and not readme.is_symlink()
+        ):
+            continue
         required.append(readme_rel)
         if not readme.is_file():
             errors.append({"code": "index_missing", "path": readme_rel, "detail": relative_dir})
@@ -264,7 +272,6 @@ def check_archive_indexes(root: Path, *, relative_dirs: set[str] | None = None) 
                 continue
             if not target.exists():
                 errors.append({"code": "index_link_missing", "path": readme_rel, "detail": link})
-        expected = _index_targets(root, relative_dir)
         for link in links:
             if "://" not in link and not link.startswith("#") and link not in expected:
                 errors.append({"code": "index_orphan_entry", "path": readme_rel, "detail": link})
