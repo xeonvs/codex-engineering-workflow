@@ -14,7 +14,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.8.1"
+CURRENT_VERSION = "0.8.2"
 
 
 class SkillRepoValidationTests(unittest.TestCase):

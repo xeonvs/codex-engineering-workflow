@@ -178,7 +178,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             (root / "fixtures.md").write_text("\n".join(values) + "\n", encoding="utf-8")
             before = snapshot(root)
 
-            result = migrator.execute_prompt_upgrade(root, "0.8.1")
+            result = migrator.execute_prompt_upgrade(root, "0.8.2")
 
             self.assertFalse(result["success"])
             self.assertEqual(result["agent_action"], "request_privacy_review_approval")
@@ -205,10 +205,10 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             fixture = root / "fixtures.md"
             fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
             expected = fixture.read_bytes()
-            report = migrator.build_migration_report(root, "0.8.1")
+            report = migrator.build_migration_report(root, "0.8.2")
             review_value = report["privacy_review"]["review_token"]
 
-            result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+            result = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
 
             self.assertTrue(result["success"], result)
             self.assertEqual(result["privacy_review"]["status"], "approved")
@@ -241,11 +241,11 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 make_target(root)
                 fixture = root / "fixtures.md"
                 fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
-                review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+                review_value = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
                 mutate(fixture)
                 before = snapshot(root)
 
-                result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+                result = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
 
                 self.assertFalse(result["success"])
                 self.assertEqual(result["privacy_review"]["status"], "token_mismatch")
@@ -258,19 +258,19 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             make_target(root)
             fixture = root / "fixtures.md"
             fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
-            report = migrator.build_migration_report(root, "0.8.1")
+            report = migrator.build_migration_report(root, "0.8.2")
             review_value = report["privacy_review"]["review_token"]
 
-            malformed = migrator.apply_migration(root, "0.8.1", approved_privacy_review="not-a-review-token")
+            malformed = migrator.apply_migration(root, "0.8.2", approved_privacy_review="not-a-review-token")
             self.assertEqual(malformed["privacy_review"]["status"], "token_mismatch")
             self.assertEqual(malformed["mutation_log"], [])
 
-            other_target = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
+            other_target = migrator.apply_migration(root, "0.8.3", approved_privacy_review=review_value)
             self.assertEqual(other_target["privacy_review"]["status"], "token_mismatch")
             self.assertEqual(other_target["mutation_log"], [])
             self.assertNotEqual(
                 review_value,
-                migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"],
+                migrator.build_migration_report(root, "0.8.3")["privacy_review"]["review_token"],
             )
 
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
@@ -278,7 +278,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 "schema_version: 2\nskill_version: \"0.8.0\"\nmanaged_paths: []\n",
                 encoding="utf-8",
             )
-            current_version_review = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            current_version_review = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
             self.assertNotEqual(review_value, current_version_review)
             self.assertFalse((root / "PLANS.md").exists())
 
@@ -289,7 +289,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
 
             result = migrator.apply_migration(
                 root,
-                "0.8.1",
+                "0.8.2",
                 approved_privacy_review="privacy-review-v1:" + ("0" * 64),
             )
 
@@ -303,10 +303,10 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             make_target(root)
             fixture = root / "fixtures.md"
             fixture.write_text("person" + "@" + "example.test\n", encoding="utf-8")
-            review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            review_value = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
             fixture.unlink()
 
-            result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+            result = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
 
             self.assertTrue(result["success"], result)
             self.assertEqual(result["privacy_review"]["status"], "not_required")
@@ -317,7 +317,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             make_target(root)
             fixture = root / "fixtures.md"
             fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
-            eligible_review = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            eligible_review = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
             fixture.write_text(
                 fixture.read_text(encoding="utf-8") + "/" + "Users" + "/sample/private\n",
                 encoding="utf-8",
@@ -326,7 +326,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
 
             result = migrator.execute_prompt_upgrade(
                 root,
-                "0.8.1",
+                "0.8.2",
                 approved_privacy_review=eligible_review,
             )
 
@@ -343,7 +343,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             make_target(root)
             fixture = root / "fixtures.md"
             fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
-            review_value = migrator.build_migration_report(root, "0.8.1")["privacy_review"]["review_token"]
+            review_value = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
             original_final_scan = migrator._new_privacy_findings
 
             def introduce_before_final_scan(scan_root, approved):
@@ -351,7 +351,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 return original_final_scan(scan_root, approved)
 
             with mock.patch.object(migrator, "_new_privacy_findings", side_effect=introduce_before_final_scan):
-                result = migrator.apply_migration(root, "0.8.1", approved_privacy_review=review_value)
+                result = migrator.apply_migration(root, "0.8.2", approved_privacy_review=review_value)
 
             self.assertFalse(result["success"])
             self.assertEqual(result["update_status"], "privacy_review_required")

@@ -30,7 +30,7 @@ class MarketplacePackageTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(result["success"], result)
-        self.assertEqual(result["version"], "0.8.1")
+        self.assertEqual(result["version"], "0.8.2")
         self.assertEqual(result["drift"], [])
 
     def test_check_detects_packaged_skill_byte_drift(self):
@@ -50,10 +50,10 @@ class MarketplacePackageTests(unittest.TestCase):
                 CLAUDE_MARKETPLACE=claude_catalog,
             ):
                 expected = root / "expected"
-                builder._build_expected(expected, "0.8.1")
+                builder._build_expected(expected, "0.8.2")
                 builder.write_package(expected)
                 comparison = root / "comparison"
-                builder._build_expected(comparison, "0.8.1")
+                builder._build_expected(comparison, "0.8.2")
                 self.assertEqual(builder._drift(comparison), [])
                 skill = plugin_root / "skills/engineering-workflow/SKILL.md"
                 skill.write_bytes(skill.read_bytes() + b"\n")
@@ -76,12 +76,12 @@ class MarketplacePackageTests(unittest.TestCase):
                 CLAUDE_MARKETPLACE=claude_catalog,
             ):
                 initial = root / "initial"
-                builder._build_expected(initial, "0.8.1")
+                builder._build_expected(initial, "0.8.2")
                 builder.write_package(initial)
                 before_tree = builder._tree_state(plugin_root)
                 before_catalogs = (codex_catalog.read_bytes(), claude_catalog.read_bytes())
                 replacement = root / "replacement"
-                builder._build_expected(replacement, "0.8.1")
+                builder._build_expected(replacement, "0.8.2")
                 original_write = builder._atomic_write
                 failed = False
 
@@ -115,7 +115,7 @@ class MarketplacePackageTests(unittest.TestCase):
             )
         )
         for manifest in (codex, claude):
-            self.assertEqual(manifest["version"], "0.8.1")
+            self.assertEqual(manifest["version"], "0.8.2")
             self.assertEqual(manifest["repository"], builder.REPOSITORY_URL)
             self.assertNotIn("mcpServers", manifest)
             self.assertNotIn("apps", manifest)

@@ -165,6 +165,141 @@ class PlanLifecycleTests(unittest.TestCase):
             self.assertTrue(result["success"], result)
             self.assertEqual(archive.read_text(encoding="utf-8"), original)
 
+    def test_empty_compatibility_archive_is_optional_and_custom_archive_is_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "docs/archive/plans").mkdir(parents=True)
+            custom_archive = root / "docs/product/plans/archive/retained.md"
+            custom_archive.parent.mkdir(parents=True)
+            custom_archive.write_text("# Repository-owned retained plan\n", encoding="utf-8")
+            custom_index = root / "docs/product/PLANS_ARCHIVE.md"
+            custom_index.write_text("# Repository-owned archive index\n", encoding="utf-8")
+            (root / "docs/codex").mkdir(parents=True)
+            (root / "PLANS.md").write_text(
+                "# Execution Plans\n\nplan_schema_version: 2\n",
+                encoding="utf-8",
+            )
+            (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").write_text(
+                "schema_version: 2\n"
+                "skill_name: engineering-workflow\n"
+                "skill_version: \"0.8.1\"\n"
+                "instruction_contract_version: 2\n"
+                "protected_paths:\n"
+                "  - docs/product/PLANS_ARCHIVE.md\n"
+                "  - docs/product/plans/archive/retained.md\n",
+                encoding="utf-8",
+            )
+            (root / "docs/codex/README.md").write_text(
+                "# Workflow Documentation\n\n"
+                f"{lifecycle.INDEX_START}\n"
+                "No indexed documents yet.\n"
+                f"{lifecycle.INDEX_END}\n",
+                encoding="utf-8",
+            )
+            (root / "docs/README.md").write_text(
+                "# Documentation Index\n\n"
+                f"{lifecycle.INDEX_START}\n"
+                "- [codex/README.md](codex/README.md)\n"
+                f"{lifecycle.INDEX_END}\n",
+                encoding="utf-8",
+            )
+            before_files = {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            before_dirs = sorted(
+                path.relative_to(root).as_posix()
+                for path in root.rglob("*")
+                if path.is_dir()
+            )
+
+            result = lifecycle.check_plan_lifecycle(root)
+
+            self.assertTrue(result["success"], result)
+            self.assertNotIn("docs/archive/README.md", result["archive_indexes"]["required"])
+            self.assertNotIn("docs/archive/plans/README.md", result["archive_indexes"]["required"])
+            self.assertEqual(
+                {
+                    path.relative_to(root).as_posix(): path.read_bytes()
+                    for path in root.rglob("*")
+                    if path.is_file()
+                },
+                before_files,
+            )
+            self.assertEqual(
+                sorted(
+                    path.relative_to(root).as_posix()
+                    for path in root.rglob("*")
+                    if path.is_dir()
+                ),
+                before_dirs,
+            )
+
+    def test_non_empty_canonical_archive_still_requires_an_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            archive = root / "docs/archive/plans/retained.md"
+            archive.parent.mkdir(parents=True)
+            archive.write_text("# Retained plan\n", encoding="utf-8")
+
+            result = lifecycle.check_archive_indexes(root)
+
+            self.assertFalse(result["success"])
+            self.assertIn("docs/archive/plans/README.md", result["required"])
+            self.assertIn(
+                {
+                    "code": "index_missing",
+                    "path": "docs/archive/plans/README.md",
+                    "detail": "docs/archive/plans",
+                },
+                result["errors"],
+            )
+
+    def test_empty_archive_unmanaged_readme_is_not_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            readme = root / "docs/archive/plans/README.md"
+            readme.parent.mkdir(parents=True)
+            readme.write_text("# Repository-owned archive notes\n", encoding="utf-8")
+
+            result = lifecycle.check_archive_indexes(root)
+
+            self.assertFalse(result["success"])
+            self.assertIn("docs/archive/plans/README.md", result["required"])
+            self.assertIn(
+                {
+                    "code": "index_unmanaged",
+                    "path": "docs/archive/plans/README.md",
+                    "detail": "managed marker block missing",
+                },
+                result["errors"],
+            )
+
+    def test_empty_archive_symbolic_readmes_are_not_skipped(self):
+        for broken in (False, True):
+            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                readme = root / "docs/archive/plans/README.md"
+                readme.parent.mkdir(parents=True)
+                target = root / "outside.md"
+                if not broken:
+                    target.write_text("# Outside\n", encoding="utf-8")
+                readme.symlink_to(target)
+
+                result = lifecycle.check_archive_indexes(root)
+
+                self.assertFalse(result["success"])
+                self.assertIn("docs/archive/plans/README.md", result["required"])
+                self.assertTrue(
+                    any(
+                        item["path"] == "docs/archive/plans/README.md"
+                        and item["code"] in {"index_missing", "index_unsafe"}
+                        for item in result["errors"]
+                    ),
+                    result,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
