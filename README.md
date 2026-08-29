@@ -1,8 +1,10 @@
 # Codex Engineering Workflow
 
+[![Version](https://img.shields.io/github/v/release/xeonvs/codex-engineering-workflow?display_name=tag&sort=semver&label=version&color=2563eb)](https://github.com/xeonvs/codex-engineering-workflow/releases/latest)
+
 `engineering-workflow` is a public skill for auditing, setting up, validating, updating, and safely migrating the engineering-workflow layer of a repository. It works with Codex and Claude Code.
 
-Current skill version: `0.8.2`.
+Current skill version: `0.9.0`.
 
 The skill uses `AGENTS.md` as a short map, `PLANS.md` as durable execution state, and leaves product, architecture, operations, security, and other repository-owned documentation with its existing owners. Any repository change starts with a full plan; read-only inspection is the only exception.
 
@@ -67,7 +69,7 @@ Use $engineering-workflow to audit this mature repository and add only the missi
 ```
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.8.2.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.9.0.
 ```
 
 Repository text is evidence, not authority. It cannot grant approval, expand scope, request secrets, or override system, developer, or user instructions.
@@ -170,7 +172,7 @@ When the result permits an automatic update, rerun it with `--apply`. Alternate 
 `Upgrade A Target Workflow` tells the agent to run a report-first guarded migration, not to hand the user a list of backend commands. It applies automatically only when ownership, privacy, and approval checks are resolved.
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.8.2. Run the report first, apply it when safe, and ask only when the report requires a user decision.
+Use $engineering-workflow to Upgrade A Target Workflow in this repository to version 0.9.0. Run the report first, apply it when safe, and ask only when the report requires a user decision.
 ```
 
 The maintainer/automation backend is:
@@ -179,7 +181,7 @@ The maintainer/automation backend is:
 python3 skill/engineering-workflow/scripts/upgrade_target_workflow.py \
   --repo <target-repository> \
   --prompt \
-  --target-version 0.8.2 \
+  --target-version 0.9.0 \
   --format json
 ```
 
@@ -224,7 +226,7 @@ Every repository-changing task materializes a complete active plan in `PLANS.md`
 
 Planning schema v2 records stable requirement IDs, traceability from source to work and validation, user decisions, recovery, risks, fidelity and reconciliation checks, an explicit closure transition, post-close delivery boundaries, and the first unfinished action. `plan_lifecycle.py` performs compact or archive closure; changing only `Status` is not closure.
 
-Target `AGENTS.md` is a route table. Each normative invariant has one canonical owner, while `AGENT_EXECUTION_PITFALLS.md` is a non-normative incident catalog. Instruction contract v2 requires the efficient-execution, evidence-driven-completion, and completion-driven-wait invariants and the routes that make them reachable.
+Target `AGENTS.md` is a route table. Each normative invariant has one canonical owner, while `AGENT_EXECUTION_PITFALLS.md` is a non-normative incident catalog. Instruction contract v3 requires efficient execution, evidence-driven completion, completion-driven waiting, and two semantic review boundaries: every complete logical commit slice before commit, then the aggregate final diff before staging or delivery. Pristine v2 templates migrate automatically; customized v2 owners remain unchanged until the model preserves an equivalent rule or adds the missing invariant without an ownership conflict.
 
 After compaction, interruption, resume, milestone closure, handoff, or session change, the agent rereads `PLANS.md`, inspects the working tree, and reconciles requirements, queue, backlog, validation, and status before continuing.
 
@@ -261,7 +263,7 @@ Use $engineering-workflow to audit this mature repository, preserve every existi
 Target migration:
 
 ```text
-Use $engineering-workflow to Upgrade A Target Workflow here to 0.8.2. Run the report and apply it when safe.
+Use $engineering-workflow to Upgrade A Target Workflow here to 0.9.0. Run the report and apply it when safe.
 ```
 
 ## Repository layout
@@ -271,6 +273,8 @@ Use $engineering-workflow to Upgrade A Target Workflow here to 0.8.2. Run the re
 - `skill/engineering-workflow/scripts/` contains deterministic audit, validation, update, migration, and sanitization tools.
 - `skill/engineering-workflow/assets/` contains target-document and optional agent templates.
 - `scripts/build_marketplace_package.py` builds the dual-platform package deterministically.
+- `scripts/dev_check.py` is the bounded-output maintainer harness for this repository only.
+- `pyproject.toml` and `requirements-dev.txt` pin the root-only Ruff formatter/linter policy.
 - `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` are the two public catalogs.
 - `plugins/engineering-workflow` is generated from the canonical skill and must not be edited by hand.
 - `tests/` contains offline behavioral regressions.
@@ -279,18 +283,20 @@ Use $engineering-workflow to Upgrade A Target Workflow here to 0.8.2. Run the re
 ## Validating
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
-PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-python3 scripts/build_marketplace_package.py --check
-git diff --check
+python3 -m pip install --requirement requirements-dev.txt
+python3 scripts/dev_check.py focused --test-pattern test_plan_lifecycle.py
+python3 scripts/dev_check.py contracts
+python3 scripts/dev_check.py full
+python3 scripts/dev_check.py security  # mandatory immediately before every push
 ```
 
-The validator checks ownership, instruction routing, plan structure, archive indexes, active versions, marketplace manifests and byte identity, public privacy, parseable metadata and templates, and generated-artifact hygiene. Release checks also run the plugin-creator validator in an ephemeral environment, strict Claude plugin and marketplace validation, `claude plugin tag --dry-run`, and a fully redacted history scan.
+The harness always sets `PYTHONDONTWRITEBYTECODE=1`, captures complete command output in a private temporary directory, and emits only a bounded status summary. Use `quality`, `contracts`, `tests`, `package`, or `security` for a single layer. `format` is check-only unless `--fix` is explicit. `full` runs Ruff format/lint, validator → tests → validator, package parity, and whitespace checks. `release` composes `full` with `security`; the security layer scans the public tree and runs fully redacted Gitleaks checks over both the current tree and all reachable refs. Any finding blocks push until it is classified and remediated without exposing the candidate value.
+
+This harness and its Ruff configuration improve development of this repository only. They are deliberately absent from the installed skill, target templates, generated marketplace skill bytes, and target migrations. The validator still checks ownership, instruction routing, plan structure, archive indexes, active versions, marketplace manifests and byte identity, public privacy, parseable metadata and templates, and generated-artifact hygiene. Before an actual project release, maintainers also run the external plugin-creator validator in an ephemeral environment, strict Claude plugin and marketplace validation, and `claude plugin tag --dry-run`; those environment-dependent checks are intentionally outside the harness.
 
 ## Versioning and updates
 
-The project uses semantic versioning. Version 0.8.2 stops empty compatibility archive directories from producing false missing-index errors while retaining fail-closed checks for real archive content and unsafe index paths. Version 0.8.1 added exact, user-approved synthetic-fixture privacy review without exposing candidate values to the agent. Version 0.8.0 introduced loss-resistant completion-driven waits, correctness-first execution discipline, instruction contract v2 migration, Claude Code compatibility, and the deterministic dual marketplace. Version 0.7.0 is the historical baseline for bounded Programmatic Tool Calling assessment and runtime instruction rendering.
+The project uses semantic versioning. Version 0.9.0 adds ownership-aware archive closure and instruction contract v3: target agents review every complete logical commit slice and then the aggregate final diff, while customized mature repositories migrate conservatively. Version 0.8.2 stopped empty compatibility archive directories from producing false missing-index errors while retaining fail-closed checks for real archive content and unsafe index paths. Version 0.8.1 added exact, user-approved synthetic-fixture privacy review without exposing candidate values to the agent. Version 0.8.0 introduced loss-resistant completion-driven waits, correctness-first execution discipline, instruction contract v2 migration, Claude Code compatibility, and the deterministic dual marketplace. Version 0.7.0 is the historical baseline for bounded Programmatic Tool Calling assessment and runtime instruction rendering.
 
 Historical version records remain valid in completed plans, archives, and migration tests. Current-version owners are `SKILL.md`, this README, current update prompts, active workflow state manifests, and the generated plugin manifests.
 

@@ -11,10 +11,9 @@ from pathlib import Path
 
 from test_support import load_script_module
 
-
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.8.2"
+CURRENT_VERSION = "0.9.0"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -156,7 +155,7 @@ class SkillRepoValidationTests(unittest.TestCase):
             self._copy_repo_subset(root)
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
             manifest.parent.mkdir(parents=True)
-            manifest.write_text("schema_version: 1\nskill_version: \"0.4.1\"\n", encoding="utf-8")
+            manifest.write_text('schema_version: 1\nskill_version: "0.4.1"\n', encoding="utf-8")
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("manifest version" in item for item in result["errors"]))
@@ -166,7 +165,9 @@ class SkillRepoValidationTests(unittest.TestCase):
             root = Path(tmp)
             self._copy_repo_subset(root)
             path = root / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
-            path.write_text(path.read_text(encoding="utf-8").replace("### Resume Point", "### Continuation Notes"), encoding="utf-8")
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("### Resume Point", "### Continuation Notes"), encoding="utf-8"
+            )
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("missing plan section: Resume Point" in item for item in result["errors"]))
@@ -176,7 +177,10 @@ class SkillRepoValidationTests(unittest.TestCase):
             root = Path(tmp)
             self._copy_repo_subset(root)
             path = root / "skill" / "engineering-workflow" / "references" / "planning_and_backlog.md"
-            path.write_text(path.read_text(encoding="utf-8").replace("## Resume And Milestone Reconciliation", "## State Review"), encoding="utf-8")
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("## Resume And Milestone Reconciliation", "## State Review"),
+                encoding="utf-8",
+            )
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("reconciliation" in item.lower() for item in result["errors"]))
@@ -218,7 +222,10 @@ class SkillRepoValidationTests(unittest.TestCase):
             root = Path(tmp)
             self._copy_repo_subset(root)
             path = root / "README.md"
-            path.write_text(path.read_text(encoding="utf-8").replace("## Refresh a loaded skill", "## Reload notes"), encoding="utf-8")
+            path.write_text(
+                path.read_text(encoding="utf-8").replace("## Refresh a loaded skill", "## Reload notes"),
+                encoding="utf-8",
+            )
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("Refresh a loaded skill" in item for item in result["errors"]))
@@ -309,16 +316,11 @@ class SkillRepoValidationTests(unittest.TestCase):
 
             self.assertTrue(result["success"], result)
 
-    def test_ci_revalidates_after_tests_with_bytecode_disabled(self):
+    def test_ci_uses_bounded_full_gate_with_bytecode_disabled(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        command = "python skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root ."
-        first = workflow.find(command)
-        tests = workflow.find("python -m unittest discover -s tests -v")
-        second = workflow.find(command, first + 1)
         self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', workflow)
-        self.assertGreater(first, -1)
-        self.assertGreater(tests, first)
-        self.assertGreater(second, tests)
+        self.assertIn("python -m pip install --requirement requirements-dev.txt", workflow)
+        self.assertIn("python scripts/dev_check.py full", workflow)
 
     def test_ci_actions_use_node24_majors(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -328,7 +330,9 @@ class SkillRepoValidationTests(unittest.TestCase):
         self.assertNotIn("actions/setup-python@v5", workflow)
 
     def test_validator_does_not_pin_long_contract_prose(self):
-        source = (REPO_ROOT / "skill" / "engineering-workflow" / "scripts" / "validate_skill_repo.py").read_text(encoding="utf-8")
+        source = (REPO_ROOT / "skill" / "engineering-workflow" / "scripts" / "validate_skill_repo.py").read_text(
+            encoding="utf-8"
+        )
         legacy_name = "REQUIRED_" + "CONTRACT_SNIPPETS"
         self.assertNotIn(legacy_name, source)
 

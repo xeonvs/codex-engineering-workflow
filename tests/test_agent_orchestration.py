@@ -4,7 +4,6 @@ import tomllib
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = REPO_ROOT / "skill" / "engineering-workflow" / "references" / "agent_orchestration.md"
 PROFILES = REPO_ROOT / "skill" / "engineering-workflow" / "references" / "model_profiles.md"

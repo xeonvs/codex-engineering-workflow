@@ -5,7 +5,6 @@ from pathlib import Path
 
 from test_support import load_script_module
 
-
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 plan_bootstrap = load_script_module("plan_bootstrap")
 

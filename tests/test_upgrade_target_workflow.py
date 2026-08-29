@@ -12,7 +12,6 @@ from unittest import mock
 
 from test_support import load_script_module
 
-
 common = load_script_module("common")
 migrator = load_script_module("upgrade_target_workflow")
 
@@ -31,11 +30,7 @@ def make_target(root: Path) -> None:
 
 
 def snapshot(root: Path) -> dict[str, bytes]:
-    return {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in root.rglob("*")
-        if path.is_file()
-    }
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
 def synthetic_review_lines() -> list[str]:
@@ -83,9 +78,21 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             plan_text = (root / "PLANS.md").read_text(encoding="utf-8")
             self.assertNotIn("## Active Plan:", plan_text)
             self.assertIn("## Recently Completed", plan_text)
-            self.assertIn("schema_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
-            self.assertIn("instruction_contract_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
-            self.assertIn("planning_contract_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"))
+            self.assertIn(
+                "schema_version: 2", (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "instruction_contract_version: 3",
+                (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "planning_contract_version: 2",
+                (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8"),
+            )
+            state_text = (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8")
+            self.assertIn('plan_archive_path: "docs/archive/plans"', state_text)
+            self.assertIn('  - "docs/archive/plans/README.md"', state_text)
+            self.assertIn("active_plan: null", state_text)
             self.assertTrue(result["validation_result"]["instruction_contract"])
             for relative in ("docs/README.md", "docs/codex/README.md", "docs/engineering/README.md"):
                 self.assertTrue((root / relative).is_file(), relative)
@@ -275,7 +282,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
 
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
             manifest.write_text(
-                "schema_version: 2\nskill_version: \"0.8.0\"\nmanaged_paths: []\n",
+                'schema_version: 2\nskill_version: "0.8.0"\nmanaged_paths: []\n',
                 encoding="utf-8",
             )
             current_version_review = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
@@ -462,7 +469,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             missing = migrator.build_migration_report(root, "0.5.0")
             self.assertEqual(missing["current_workflow_version"], "unknown")
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
-            manifest.write_text("schema_version: 1\nskill_version: \"0.4.1\"\nmanaged_paths: []\n", encoding="utf-8")
+            manifest.write_text('schema_version: 1\nskill_version: "0.4.1"\nmanaged_paths: []\n', encoding="utf-8")
             existing = migrator.build_migration_report(root, "0.5.0")
             self.assertEqual(existing["current_workflow_version"], "0.4.1")
             self.assertIn("docs/codex/ENGINEERING_WORKFLOW_STATE.yaml", existing["managed_paths"])
@@ -485,34 +492,47 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(result["update_status"], "instruction_migration_required")
             self.assertEqual(result["agent_action"], "review_instruction_migration")
             self.assertEqual(result["required_user_questions"], [])
-            self.assertEqual(result["instruction_contract"]["required_contract_version"], 2)
+            self.assertEqual(result["instruction_contract"]["required_contract_version"], 3)
             self.assertEqual(result["mutation_log"], [])
             self.assertEqual({path: path.read_bytes() for path in protected_paths}, before)
 
-    def test_pristine_rendered_0_7_templates_auto_migrate_to_contract_v2(self):
+    def test_pristine_rendered_v1_templates_auto_migrate_to_contract_v3(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
             agents_v2 = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            agents_v2 = agents_v2.replace(
+                'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**|workflow-state plan archive|plan closure"',
+                'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**"',
+            ).replace(
+                "plan, backlog, closure, or default/custom workflow-state archive",
+                "plan, backlog, closure, or archive",
+            )
             route_start = agents_v2.index('<!-- ew:route id="long-running-execution"')
             route_end = agents_v2.index("\n## Route Maintenance", route_start)
-            agents_v1 = (
-                agents_v2[:route_start].rstrip()
-                + "\n\n"
-                + agents_v2[route_end:].lstrip("\n")
-            ).replace("instruction_contract_version: 2", "instruction_contract_version: 1")
+            agents_v1 = (agents_v2[:route_start].rstrip() + "\n\n" + agents_v2[route_end:].lstrip("\n")).replace(
+                "instruction_contract_version: 3", "instruction_contract_version: 1"
+            )
             agents_v1 = agents_v1.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
 
             principles_v2 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
             new_rules = principles_v2.index('<!-- ew:invariant id="workflow.efficient-execution" -->')
             owned_refs = principles_v2.index("## Owned References", new_rules)
             principles_v1 = principles_v2[:new_rules] + principles_v2[owned_refs:]
-            principles_v1 = principles_v1.replace(
-                "- Long-running execution and waiter integrity: installed `engineering-workflow` skill, `references/agent_orchestration.md`.\n",
-                "",
-            ).replace(
-                "- Validation and execution safety: installed `engineering-workflow` skill, `references/validation_safety.md`.\n",
-                "",
+            principles_v1 = (
+                principles_v1.replace(
+                    "- Long-running execution and waiter integrity: installed `engineering-workflow` skill, `references/agent_orchestration.md`.\n",
+                    "",
+                )
+                .replace(
+                    "- Validation and execution safety: installed `engineering-workflow` skill, `references/validation_safety.md`.\n",
+                    "",
+                )
+                .replace(
+                    "- Privacy and pre-push secret gating: installed `engineering-workflow` skill, "
+                    "`references/privacy_and_sanitization.md`.\n",
+                    "",
+                )
             )
 
             (root / "AGENTS.md").write_text(agents_v1, encoding="utf-8")
@@ -524,11 +544,103 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             result = migrator.apply_migration(root, "0.8.0")
 
             self.assertTrue(result["success"], result)
-            self.assertIn("instruction_contract_version: 2", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("instruction_contract_version: 3", (root / "AGENTS.md").read_text(encoding="utf-8"))
             self.assertIn("workflow.completion-driven-wait", principles.read_text(encoding="utf-8"))
+            self.assertIn("workflow.review-before-commit", principles.read_text(encoding="utf-8"))
             manifest = (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8")
             self.assertIn('skill_version: "0.8.0"', manifest)
             self.assertIn("orchestration_contract_version: 3", manifest)
+
+    def test_customized_v2_requires_model_review_without_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            agents = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            agents = agents.replace("instruction_contract_version: 3", "instruction_contract_version: 2")
+            agents = agents.replace("{{ entrypoint_hint }}", "custom-entry.md").replace("{{ subsystem_hint }}", "app/")
+            agents += "\nRepository-specific review route note.\n"
+            (root / "AGENTS.md").write_text(agents, encoding="utf-8")
+            principles_v3 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
+            review_start = principles_v3.index('<!-- ew:invariant id="workflow.review-before-commit" -->')
+            wait_start = principles_v3.index('<!-- ew:invariant id="workflow.completion-driven-wait" -->', review_start)
+            principles_v2 = principles_v3[:review_start] + principles_v3[wait_start:]
+            principles_v2 = principles_v2.replace(
+                "\nBefore every authorized push, follow the installed `engineering-workflow` privacy reference: scan "
+                "the final public tree and every ref the push can expose, keep candidate values out of agent output, "
+                "and block the push until every finding is safely classified and remediated. Never weaken a scanner "
+                "or rewrite history merely to make the gate green.\n",
+                "",
+            ).replace(
+                "- Privacy and pre-push secret gating: installed `engineering-workflow` skill, "
+                "`references/privacy_and_sanitization.md`.\n",
+                "",
+            )
+            principles = root / common.CANONICAL_FILES["principles"]
+            principles.write_text(principles_v2 + "\nRepository-specific ownership note.\n", encoding="utf-8")
+            before = {
+                root / "AGENTS.md": (root / "AGENTS.md").read_bytes(),
+                principles: principles.read_bytes(),
+            }
+
+            result = migrator.execute_prompt_upgrade(root, "0.9.0")
+
+            self.assertFalse(result["success"], result)
+            self.assertEqual(result["update_status"], "instruction_migration_required")
+            self.assertEqual(result["agent_action"], "review_instruction_migration")
+            self.assertEqual(result["required_user_questions"], [])
+            self.assertEqual(result["instruction_contract"]["required_contract_version"], 3)
+            self.assertEqual(
+                result["instruction_contract"]["missing_required_invariants"],
+                ["workflow.review-before-commit"],
+            )
+            self.assertEqual(result["mutation_log"], [])
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_pristine_rendered_v2_templates_auto_migrate_to_contract_v3(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            agents_v3 = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            agents_v2 = agents_v3.replace("instruction_contract_version: 3", "instruction_contract_version: 2")
+            agents_v2 = agents_v2.replace(
+                'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**|workflow-state plan archive|plan closure"',
+                'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**"',
+            ).replace(
+                "plan, backlog, closure, or default/custom workflow-state archive",
+                "plan, backlog, closure, or archive",
+            )
+            agents_v2 = agents_v2.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
+
+            principles_v3 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
+            review_start = principles_v3.index('<!-- ew:invariant id="workflow.review-before-commit" -->')
+            wait_start = principles_v3.index('<!-- ew:invariant id="workflow.completion-driven-wait" -->', review_start)
+            principles_v2 = principles_v3[:review_start] + principles_v3[wait_start:]
+            principles_v2 = principles_v2.replace(
+                "\nBefore every authorized push, follow the installed `engineering-workflow` privacy reference: scan "
+                "the final public tree and every ref the push can expose, keep candidate values out of agent output, "
+                "and block the push until every finding is safely classified and remediated. Never weaken a scanner "
+                "or rewrite history merely to make the gate green.\n",
+                "",
+            ).replace(
+                "- Privacy and pre-push secret gating: installed `engineering-workflow` skill, "
+                "`references/privacy_and_sanitization.md`.\n",
+                "",
+            )
+
+            (root / "AGENTS.md").write_text(agents_v2, encoding="utf-8")
+            principles = root / common.CANONICAL_FILES["principles"]
+            principles.write_text(principles_v2, encoding="utf-8")
+            self.assertTrue(migrator._is_pristine_legacy("AGENTS.md", agents_v2))
+            self.assertTrue(migrator._is_pristine_legacy(common.CANONICAL_FILES["principles"], principles_v2))
+
+            result = migrator.apply_migration(root, "0.9.0")
+
+            self.assertTrue(result["success"], result)
+            self.assertIn("instruction_contract_version: 3", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("workflow.review-before-commit", principles.read_text(encoding="utf-8"))
+            manifest = (root / "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml").read_text(encoding="utf-8")
+            self.assertIn('skill_version: "0.9.0"', manifest)
+            self.assertIn("instruction_contract_version: 3", manifest)
 
     def test_unrelated_active_plan_requires_targeted_question_and_no_write(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -612,7 +724,9 @@ Status: active
                 "Do not duplicate the full planning contract here. Link actionable inactive follow-up work from `docs/codex/TASKS_BACKLOG.md` and promote it into `PLANS.md` only when work begins.\n",
                 encoding="utf-8",
             )
-            self.assertTrue(migrator._is_pristine_legacy(common.CANONICAL_FILES["pitfalls"], pitfalls.read_text(encoding="utf-8")))
+            self.assertTrue(
+                migrator._is_pristine_legacy(common.CANONICAL_FILES["pitfalls"], pitfalls.read_text(encoding="utf-8"))
+            )
             result = migrator.apply_migration(root, "0.6.0")
             self.assertTrue(result["success"], result)
             self.assertIn("incident_schema_version: 1", pitfalls.read_text(encoding="utf-8"))
@@ -672,7 +786,7 @@ Status: active
             make_target(root)
             config = root / ".codex" / "config.toml"
             config.parent.mkdir(parents=True)
-            original = "custom = \"keep\"\n\n[agents]\nmax_threads = 4\nmax_depth = 2\n"
+            original = 'custom = "keep"\n\n[agents]\nmax_threads = 4\nmax_depth = 2\n'
             config.write_text(original, encoding="utf-8")
             result = migrator.apply_migration(root, "0.5.0", include_agent_config=False)
             self.assertTrue(result["success"], result)
@@ -685,7 +799,7 @@ Status: active
             make_target(root)
             config = root / ".codex" / "config.toml"
             config.parent.mkdir(parents=True)
-            original = "custom = \"keep\"\n\n[agents]\nmax_threads = 4\n\n[profiles.custom]\nmode = \"custom\"\n"
+            original = 'custom = "keep"\n\n[agents]\nmax_threads = 4\n\n[profiles.custom]\nmode = "custom"\n'
             config.write_text(original, encoding="utf-8")
             result = migrator.apply_migration(root, "0.5.0", include_agent_config=True)
             self.assertTrue(result["success"], result)
@@ -754,8 +868,77 @@ Status: active
                     continue
                 if in_managed:
                     break
-            self.assertEqual(managed_lines, ["docs/codex/ENGINEERING_WORKFLOW_STATE.yaml"])
+            self.assertEqual(
+                managed_lines,
+                [
+                    "docs/codex/ENGINEERING_WORKFLOW_STATE.yaml",
+                    '"docs/archive/plans/README.md"',
+                    '"docs/archive/README.md"',
+                    '"docs/README.md"',
+                ],
+            )
             self.assertIn('"docs/codex/team-notes.md"', text)
+
+    def test_manifest_preserves_complete_custom_archive_contract(self):
+        existing = (
+            "schema_version: 2\n"
+            "managed_paths:\n"
+            "  - docs/codex/ENGINEERING_WORKFLOW_STATE.yaml\n"
+            "  - docs/product/PLANS_ARCHIVE.md\n"
+            "  - docs/README.md\n"
+            "plan_archive_path: docs/product/plans/archive\n"
+            "plan_archive_indexes:\n"
+            "  - docs/product/PLANS_ARCHIVE.md\n"
+            "  - docs/README.md\n"
+            "active_plan: null\n"
+        )
+
+        rendered = migrator._manifest_text("0.8.3", [], ["PLANS.md"], False, existing)
+
+        self.assertIn('plan_archive_path: "docs/product/plans/archive"', rendered)
+        self.assertIn('  - "docs/product/PLANS_ARCHIVE.md"', rendered)
+        self.assertIn('  - "docs/README.md"', rendered)
+        self.assertIn('active_plan: "PLANS.md"', rendered)
+        self.assertNotIn('plan_archive_path: "docs/archive/plans"', rendered)
+
+    def test_manifest_rejects_partial_custom_archive_contract(self):
+        existing = "plan_archive_path: docs/product/plans/archive\nactive_plan: null\n"
+
+        with self.assertRaises(migrator.MigrationConflict) as error:
+            migrator._manifest_text("0.8.3", [], ["PLANS.md"], False, existing)
+
+        self.assertEqual(error.exception.code, "ambiguous_archive_ownership")
+
+    def test_report_rejects_partial_archive_contract_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            state = root / common.STATE_MANIFEST_PATH
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text(
+                "schema_version: 2\n"
+                'skill_version: "0.8.2"\n'
+                "managed_paths: []\n"
+                "plan_archive_path: docs/product/plans/archive\n"
+                "active_plan: null\n",
+                encoding="utf-8",
+            )
+            before = {
+                path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()
+            }
+
+            result = migrator.build_migration_report(root, "0.9.0")
+
+            self.assertFalse(result["success"], result)
+            self.assertTrue(
+                any(item["type"] == "ambiguous_archive_ownership" for item in result["conflicts"]),
+                result,
+            )
+            self.assertEqual(len(result["required_user_questions"]), 1)
+            self.assertEqual(
+                {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()},
+                before,
+            )
 
     def test_existing_manifest_managed_path_is_classified_exactly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -765,7 +948,7 @@ Status: active
             managed.write_text("owned\n", encoding="utf-8")
             manifest = root / "docs" / "codex" / "ENGINEERING_WORKFLOW_STATE.yaml"
             manifest.write_text(
-                "schema_version: 1\nskill_version: \"0.4.1\"\nmanaged_paths:\n  - docs/codex/owned.md\n",
+                'schema_version: 1\nskill_version: "0.4.1"\nmanaged_paths:\n  - docs/codex/owned.md\n',
                 encoding="utf-8",
             )
             report = migrator.build_migration_report(root, "0.5.0")

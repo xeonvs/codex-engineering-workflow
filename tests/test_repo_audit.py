@@ -7,7 +7,6 @@ from pathlib import Path
 
 from test_support import load_script_module
 
-
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 repo_audit = load_script_module("repo_audit")
 

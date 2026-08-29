@@ -1,6 +1,6 @@
 # Agent Instructions
 
-instruction_contract_version: 2
+instruction_contract_version: 3
 
 ## Task Routes
 

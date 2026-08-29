@@ -3,7 +3,6 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = REPO_ROOT / "skill/engineering-workflow/references/platform_compatibility.md"
 SKILL = REPO_ROOT / "skill/engineering-workflow/SKILL.md"

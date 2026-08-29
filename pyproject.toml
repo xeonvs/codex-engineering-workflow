@@ -1,0 +1,15 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+force-exclude = true
+# The generated package is builder-verified. The updater test contains
+# line-stable privacy fixtures whose exact coordinates are part of the contract.
+extend-exclude = ["plugins", "tests/test_update_installed_skill.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

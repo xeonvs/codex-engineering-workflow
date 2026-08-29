@@ -7,7 +7,6 @@ from pathlib import Path
 
 from test_support import load_script_module
 
-
 sanitize_output = load_script_module("sanitize_output")
 common = load_script_module("common")
 

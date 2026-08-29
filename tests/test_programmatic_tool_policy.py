@@ -10,7 +10,6 @@ from pathlib import Path
 
 from test_support import SCRIPT_DIR, load_script_module
 
-
 policy = load_script_module("assess_programmatic_stage")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TARGET_TEMPLATES = (

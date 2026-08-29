@@ -15,6 +15,11 @@ Preserve correctness and required evidence while using bounded inspection.
 
 Use the required checks as green and stop after the result is proven.
 
+<!-- ew:invariant id="workflow.review-before-commit" -->
+## Review Before Commit
+
+Review every complete logical commit slice, fix findings, and then review the aggregate final diff before staging or delivery.
+
 <!-- ew:invariant id="workflow.completion-driven-wait" -->
 ## Completion-Driven Wait
 

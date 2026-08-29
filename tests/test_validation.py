@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from test_support import load_script_module
-
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 common = load_script_module("common")
@@ -17,8 +17,7 @@ validate_target_repo = load_script_module("validate_target_repo")
 class ValidationTests(unittest.TestCase):
     def test_execution_reference_preserves_correctness_and_evidence_boundaries(self):
         reference = (
-            Path(__file__).resolve().parents[1]
-            / "skill/engineering-workflow/references/validation_safety.md"
+            Path(__file__).resolve().parents[1] / "skill/engineering-workflow/references/validation_safety.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Optimize inspection and execution only after correctness", reference)
         self.assertIn("one bounded reconnaissance pass", reference)
@@ -31,6 +30,30 @@ class ValidationTests(unittest.TestCase):
     def test_mature_instruction_fixture_passes_contract_validation(self):
         result = validate_target_repo.validate_repo(FIXTURES / "mature_repo", mode="read-only")
         self.assertTrue(result["success"], result)
+
+    def test_contract_v3_target_validator_enforces_managed_instruction_indexes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(FIXTURES / "mature_repo", root, dirs_exist_ok=True)
+            engineering_index = root / "docs/engineering/README.md"
+            engineering_index.write_text(
+                "# Engineering Documentation Index\n\n"
+                f"{common.INDEX_MARKER_START}\n"
+                "No indexed documents yet.\n"
+                f"{common.INDEX_MARKER_END}\n",
+                encoding="utf-8",
+            )
+
+            result = validate_target_repo.validate_repo(root, mode="read-only")
+
+            self.assertFalse(result["success"], result)
+            self.assertTrue(
+                any(
+                    "Archive index error: index_entry_mismatch in docs/engineering/README.md" in item
+                    for item in result["errors"]
+                ),
+                result,
+            )
 
     def test_compileall_is_not_read_only_safe(self):
         self.assertEqual(common.classify_command_safety("python -m compileall ."), "copy_only_safe")
@@ -193,9 +216,7 @@ class ValidationTests(unittest.TestCase):
             source = Path(tmp) / "repo"
             source.mkdir()
             (source / "network_probe.py").write_text(
-                "import socket\n"
-                "sock = socket.socket()\n"
-                "sock.bind(('127.0.0.1', 0))\n",
+                "import socket\nsock = socket.socket()\nsock.bind(('127.0.0.1', 0))\n",
                 encoding="utf-8",
             )
             results = common.run_in_disposable_copy(source, ["python network_probe.py"])

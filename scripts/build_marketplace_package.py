@@ -11,7 +11,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SKILL = REPO_ROOT / "skill" / "engineering-workflow"
 PLUGIN_ROOT = REPO_ROOT / "plugins" / "engineering-workflow"
@@ -143,12 +142,8 @@ def _copy_skill(destination: Path) -> None:
 def _build_expected(destination: Path, version: str) -> None:
     (destination / ".codex-plugin").mkdir(parents=True)
     (destination / ".claude-plugin").mkdir(parents=True)
-    (destination / ".codex-plugin" / "plugin.json").write_bytes(
-        _json_bytes(_codex_manifest(version))
-    )
-    (destination / ".claude-plugin" / "plugin.json").write_bytes(
-        _json_bytes(_claude_manifest(version))
-    )
+    (destination / ".codex-plugin" / "plugin.json").write_bytes(_json_bytes(_codex_manifest(version)))
+    (destination / ".claude-plugin" / "plugin.json").write_bytes(_json_bytes(_claude_manifest(version)))
     _copy_skill(destination / "skills" / PLUGIN_NAME)
 
 
@@ -209,8 +204,7 @@ def write_package(expected: Path) -> None:
         raise PackageError("marketplace outputs must not be symbolic links")
     backup = PLUGIN_ROOT.parent / f".{PLUGIN_NAME}.previous"
     catalog_snapshots = {
-        path: path.read_bytes() if path.is_file() else None
-        for path in (CODEX_MARKETPLACE, CLAUDE_MARKETPLACE)
+        path: path.read_bytes() if path.is_file() else None for path in (CODEX_MARKETPLACE, CLAUDE_MARKETPLACE)
     }
     if backup.exists():
         shutil.rmtree(backup)

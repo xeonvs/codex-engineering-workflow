@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILDER_PATH = REPO_ROOT / "scripts" / "build_marketplace_package.py"
 SPEC = importlib.util.spec_from_file_location("build_marketplace_package", BUILDER_PATH)
@@ -30,7 +29,7 @@ class MarketplacePackageTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(result["success"], result)
-        self.assertEqual(result["version"], "0.8.2")
+        self.assertEqual(result["version"], "0.9.0")
         self.assertEqual(result["drift"], [])
 
     def test_check_detects_packaged_skill_byte_drift(self):
@@ -50,10 +49,10 @@ class MarketplacePackageTests(unittest.TestCase):
                 CLAUDE_MARKETPLACE=claude_catalog,
             ):
                 expected = root / "expected"
-                builder._build_expected(expected, "0.8.2")
+                builder._build_expected(expected, "0.9.0")
                 builder.write_package(expected)
                 comparison = root / "comparison"
-                builder._build_expected(comparison, "0.8.2")
+                builder._build_expected(comparison, "0.9.0")
                 self.assertEqual(builder._drift(comparison), [])
                 skill = plugin_root / "skills/engineering-workflow/SKILL.md"
                 skill.write_bytes(skill.read_bytes() + b"\n")
@@ -76,12 +75,12 @@ class MarketplacePackageTests(unittest.TestCase):
                 CLAUDE_MARKETPLACE=claude_catalog,
             ):
                 initial = root / "initial"
-                builder._build_expected(initial, "0.8.2")
+                builder._build_expected(initial, "0.9.0")
                 builder.write_package(initial)
                 before_tree = builder._tree_state(plugin_root)
                 before_catalogs = (codex_catalog.read_bytes(), claude_catalog.read_bytes())
                 replacement = root / "replacement"
-                builder._build_expected(replacement, "0.8.2")
+                builder._build_expected(replacement, "0.9.0")
                 original_write = builder._atomic_write
                 failed = False
 
@@ -105,17 +104,13 @@ class MarketplacePackageTests(unittest.TestCase):
 
     def test_manifests_declare_only_self_contained_skill_capability(self):
         codex = json.loads(
-            (REPO_ROOT / "plugins/engineering-workflow/.codex-plugin/plugin.json").read_text(
-                encoding="utf-8"
-            )
+            (REPO_ROOT / "plugins/engineering-workflow/.codex-plugin/plugin.json").read_text(encoding="utf-8")
         )
         claude = json.loads(
-            (REPO_ROOT / "plugins/engineering-workflow/.claude-plugin/plugin.json").read_text(
-                encoding="utf-8"
-            )
+            (REPO_ROOT / "plugins/engineering-workflow/.claude-plugin/plugin.json").read_text(encoding="utf-8")
         )
         for manifest in (codex, claude):
-            self.assertEqual(manifest["version"], "0.8.2")
+            self.assertEqual(manifest["version"], "0.9.0")
             self.assertEqual(manifest["repository"], builder.REPOSITORY_URL)
             self.assertNotIn("mcpServers", manifest)
             self.assertNotIn("apps", manifest)

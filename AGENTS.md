@@ -9,6 +9,8 @@ This file is local guidance for agents developing this repository. It is not par
 - `skill/engineering-workflow/scripts/` — deterministic audit, validation, migration, lifecycle, update, and privacy tools.
 - `skill/engineering-workflow/assets/` — files copied or rendered into target repositories.
 - `tests/` — offline behavioral and contract regressions.
+- `scripts/dev_check.py` — root-only maintainer harness for bounded focused, layered, full, and pre-push checks.
+- `pyproject.toml` and `requirements-dev.txt` — root-only pinned Ruff policy for this repository.
 - `PLANS.md` — durable execution state for work on this repository.
 - `docs/archive/` — future-useful closed plans and their navigation indexes.
 
@@ -38,16 +40,20 @@ This file is local guidance for agents developing this repository. It is not par
 
 ## Local Validation
 
-Run the affected focused tests while iterating, then run the complete gate:
+Install the pinned root-only tooling once, run the narrowest affected layer while iterating, then run the complete gate:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
-PYTHONDONTWRITEBYTECODE=1 python3 skill/engineering-workflow/scripts/validate_skill_repo.py --repo-root .
-git diff --check
+python3 -m pip install --requirement requirements-dev.txt
+python3 scripts/dev_check.py focused --test-pattern test_plan_lifecycle.py
+python3 scripts/dev_check.py contracts
+python3 scripts/dev_check.py full
 ```
 
-Use the public-tree privacy scan and stronger release checks when release or public-history scope makes them applicable. Do not weaken a failing gate or leave cache, scanner, generated, backup, or temporary artifacts in the repository.
+The harness forces `PYTHONDONTWRITEBYTECODE=1`, writes complete child output only to a private task-owned temporary directory, and prints a bounded status summary. It stops on the first failure by default. Raw failure tails require explicit `--show-failure-tail`; do not request them when output may contain private values. `format --fix` is the only mutating profile. The root harness and its Ruff configuration are repository-maintenance tools: never copy them into `skill/engineering-workflow`, target templates, generated marketplace skill bytes, or target migrations.
+
+Immediately before every authorized push, run `python3 scripts/dev_check.py security` against the final staged/public state. This pre-push gate includes the public-tree privacy scan plus fully redacted Gitleaks scans of the current tree and all reachable refs. A failure blocks the push: classify it without exposing the value, revoke or replace a real credential first, remove the source occurrence, and rescan. Rewrite published history only for a confirmed historical secret and only with explicit authorization, recovery refs, object-ID-pinned `force-with-lease`, and post-rewrite scans. The `release` profile composes `full` and `security`; external plugin validators remain separate because they depend on maintainer tooling.
+
+Do not weaken a failing gate or leave cache, scanner, generated, backup, or temporary artifacts in the repository.
 
 ## Authority Boundaries
 

@@ -5,7 +5,6 @@ from pathlib import Path
 
 from test_support import load_script_module
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO_ROOT / "skill" / "engineering-workflow" / "assets" / "templates" / "PLANS.md.tmpl"
 REFERENCE = REPO_ROOT / "skill" / "engineering-workflow" / "references" / "planning_and_backlog.md"

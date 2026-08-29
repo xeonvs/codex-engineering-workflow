@@ -24,7 +24,6 @@ from common import (  # noqa: E402
 from instruction_contract import check_instruction_contract  # noqa: E402
 from plan_lifecycle import check_archive_indexes, closure_issues  # noqa: E402
 
-
 REQUIRED_PATHS = (
     "AGENTS.md",
     "README.md",
@@ -90,7 +89,7 @@ SKILL_REQUIRED_HEADINGS = (
 SKILL_REQUIRED_MARKERS = (
     "audit_before_edit: required",
     "plan_schema_version: 2",
-    "instruction_contract_version: 2",
+    "instruction_contract_version: 3",
     "orchestration_contract_version: 3",
     "platform_compatibility_version: 1",
     "privacy_review_contract_version: 1",
@@ -230,6 +229,7 @@ def _scan_public_privacy(repo_root: Path) -> list[str]:
 
 def _validate_yaml_shape(text: str) -> None:
     """Parse the repository's intentionally small YAML subset without third-party dependencies."""
+
     def validate_scalar(value: str, number: int) -> None:
         stack: list[str] = []
         quote: str | None = None
@@ -433,8 +433,7 @@ def _validate_root_agents_boundary(repo_root: Path) -> list[str]:
 def _validate_source_indexes(repo_root: Path) -> list[str]:
     result = check_archive_indexes(repo_root)
     return [
-        f"Source documentation index: {item['code']} in {item['path']} ({item['detail']})"
-        for item in result["errors"]
+        f"Source documentation index: {item['code']} in {item['path']} ({item['detail']})" for item in result["errors"]
     ]
 
 
@@ -478,7 +477,14 @@ def _validate_agent_profiles(repo_root: Path) -> list[str]:
             issues.append(f"{path.name} is not parseable TOML: {exc}")
             continue
         parsed[name] = data
-        for field in ("name", "description", "developer_instructions", "model", "model_reasoning_effort", "sandbox_mode"):
+        for field in (
+            "name",
+            "description",
+            "developer_instructions",
+            "model",
+            "model_reasoning_effort",
+            "sandbox_mode",
+        ):
             if field not in data:
                 issues.append(f"{path.name} is missing required field: {field}")
     utility = parsed.get("utility", {})
@@ -504,10 +510,7 @@ def _validate_agent_profiles(repo_root: Path) -> list[str]:
 
 def _validate_programmatic_tool_assets(repo_root: Path) -> list[str]:
     issues: list[str] = []
-    template_path = (
-        repo_root
-        / "skill/engineering-workflow/assets/templates/PROGRAMMATIC_TOOL_STAGE.md.tmpl"
-    )
+    template_path = repo_root / "skill/engineering-workflow/assets/templates/PROGRAMMATIC_TOOL_STAGE.md.tmpl"
     if template_path.exists():
         text = template_path.read_text(encoding="utf-8")
         expected = {
@@ -623,11 +626,15 @@ def _validate_marketplace_package(repo_root: Path, version: str | None) -> list[
         and path.suffix != ".pyc"
         and path.name != ".DS_Store"
     }
-    packaged_files = {
-        path.relative_to(packaged).as_posix(): path
-        for path in packaged.rglob("*")
-        if path.is_file() and not path.is_symlink()
-    } if packaged.is_dir() else {}
+    packaged_files = (
+        {
+            path.relative_to(packaged).as_posix(): path
+            for path in packaged.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        if packaged.is_dir()
+        else {}
+    )
     if source_files.keys() != packaged_files.keys():
         issues.append("Packaged skill file set drifts from the canonical source")
     else:
@@ -639,11 +646,15 @@ def _validate_marketplace_package(repo_root: Path, version: str | None) -> list[
         ".claude-plugin/plugin.json",
         *(f"skills/engineering-workflow/{relative}" for relative in source_files),
     }
-    actual_plugin_files = {
-        path.relative_to(plugin_root).as_posix()
-        for path in plugin_root.rglob("*")
-        if path.is_file() and not path.is_symlink()
-    } if plugin_root.is_dir() else set()
+    actual_plugin_files = (
+        {
+            path.relative_to(plugin_root).as_posix()
+            for path in plugin_root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        if plugin_root.is_dir()
+        else set()
+    )
     if actual_plugin_files != expected_plugin_files:
         issues.append("Marketplace package contains missing or unmanaged files")
     return issues

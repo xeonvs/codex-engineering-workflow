@@ -9,4 +9,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-08-20-engineering-workflow-0-8-0-execution-discipline-and-dual-marketplace.md](2026-08-20-engineering-workflow-0-8-0-execution-discipline-and-dual-marketplace.md)
 - [2026-08-21-engineering-workflow-0-8-1-privacy-review-token.md](2026-08-21-engineering-workflow-0-8-1-privacy-review-token.md)
 - [2026-08-28-engineering-workflow-0-8-2-empty-compatibility-archive-index-fix.md](2026-08-28-engineering-workflow-0-8-2-empty-compatibility-archive-index-fix.md)
+- [2026-08-29-engineering-workflow-0-9-0-ownership-aware-closure-and-review-discipline.md](2026-08-29-engineering-workflow-0-9-0-ownership-aware-closure-and-review-discipline.md)
 <!-- engineering-workflow:index:end -->
