@@ -2,7 +2,7 @@
 name: engineering-workflow
 description: Audit, scaffold, verify, update, or migrate a repository engineering workflow while preserving existing document ownership, user scope, validation safety, and durable execution state. Use for AGENTS/PLANS/backlog/pitfalls setup, workflow upgrades, workflow-structure verification, and prompts such as Refresh Loaded Skill, Update Installed Skill, or Upgrade A Target Workflow.
 metadata:
-  version: 0.9.0
+  version: 0.9.1
 ---
 
 # Engineering Workflow
@@ -50,6 +50,7 @@ Use this skill for the workflow layer around a repository. Keep product, domain,
 4. For instruction changes, read `references/instruction_lifecycle.md`; preserve one canonical owner per invariant, keep target `AGENTS.md` route-only, and keep pitfalls non-normative.
 5. Use exact canonical paths, the state manifest, or managed-section markers as ownership evidence. Treat unknown files as protected until evidence or user direction resolves ownership.
 6. Read only the canonical reference for the selected mode. Preserve the dominant documentation language and use templates as structure, not as permission to overwrite repository-owned prose.
+   Before pausing for clarification or authorization, load `references/question_matrix.md`. For continuation, delegation, and handoff, use the shared sections of `references/agent_orchestration.md` selected by the platform reference.
 7. Keep deterministic work in scripts or tools. In Codex, a tool-heavy stage may use `references/agent_orchestration.md` and `scripts/assess_programmatic_stage.py`; in Claude Code use direct calls and never claim Programmatic Tool Calling.
 8. Validate within the selected safety mode. Run repository-authored checks only in a disposable copy unless live execution is explicitly authorized.
 9. Run privacy scanning over all tracked public text without printing or opening candidate values. Immediately before any authorized push, run the privacy reference's final-tree and reachable-ref secret gate; any finding blocks the push until safely classified and remediated. Follow `references/privacy_and_sanitization.md` for any value-free approval response, review the diff, reconcile durable state, and close or preserve the exact resume point before handoff.

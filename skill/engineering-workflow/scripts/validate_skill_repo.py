@@ -108,6 +108,7 @@ SKILL_REQUIRED_REFERENCES = (
     "references/target_workflow_upgrade.md",
     "references/validation_safety.md",
     "references/privacy_and_sanitization.md",
+    "references/question_matrix.md",
 )
 README_REQUIRED_HEADINGS = (
     "## Install with Codex or Claude Code",
@@ -142,6 +143,8 @@ CANONICAL_OWNER_MARKERS = {
     "## Cause Codes": "skill/engineering-workflow/references/instruction_lifecycle.md",
     "## Incident Catalog Schema": "skill/engineering-workflow/references/instruction_lifecycle.md",
     "## Shared Workflow Contract": "skill/engineering-workflow/references/platform_compatibility.md",
+    "## Scope And Authorization": "skill/engineering-workflow/references/question_matrix.md",
+    "## Task Continuity And Handoff": "skill/engineering-workflow/references/agent_orchestration.md",
 }
 
 
@@ -310,6 +313,23 @@ def _validate_skill_router(repo_root: Path) -> tuple[list[str], str | None]:
         return issues, None
     text = path.read_text(encoding="utf-8")
     metadata = _extract_frontmatter(text)
+    frontmatter = re.match(r"^---\n(?P<body>.*?)\n---(?:\n|$)", text, re.DOTALL)
+    if frontmatter:
+        override_fields = {"model", "effort", "context", "agent", "allowed-tools", "disallowed-tools", "hooks"}
+        root_fields = set()
+        for raw_key in re.findall(r"(?m)^([^\s:#][^:]*):", frontmatter.group("body")):
+            key = raw_key.strip()
+            if key.startswith('"'):
+                try:
+                    key = json.loads(key)
+                except json.JSONDecodeError:
+                    issues.append("Shared skill frontmatter has an unsupported quoted key")
+                    continue
+            elif key.startswith("'") and key.endswith("'"):
+                key = key[1:-1].replace("''", "'")
+            root_fields.add(key)
+        for field in sorted(root_fields & override_fields):
+            issues.append(f"Shared skill frontmatter must preserve native platform settings: {field}")
     if metadata.get("name") != "engineering-workflow" or not metadata.get("description"):
         issues.append("SKILL.md frontmatter is missing name or description")
     version = metadata.get("metadata.version")
@@ -494,9 +514,13 @@ def _validate_agent_profiles(repo_root: Path) -> list[str]:
     if utility.get("sandbox_mode") != "read-only":
         issues.append("Utility agent must remain read-only")
     explorer = parsed.get("explorer", {})
+    if explorer.get("model") != expected_utility_model or explorer.get("model_reasoning_effort") != "medium":
+        issues.append("Explorer agent must use the current balanced read-heavy profile")
     if explorer.get("sandbox_mode") != "read-only":
         issues.append("Explorer agent must remain read-only")
     reviewer = parsed.get("reviewer", {})
+    if reviewer.get("model") != "gpt-" + "6-astra":
+        issues.append("Reviewer agent must use the current Codex review model profile")
     if reviewer.get("model_reasoning_effort") != "high" or reviewer.get("sandbox_mode") != "read-only":
         issues.append("Reviewer agent must use high reasoning in read-only mode")
     reference = repo_root / "skill/engineering-workflow/references/agent_orchestration.md"

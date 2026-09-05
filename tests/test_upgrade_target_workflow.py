@@ -14,6 +14,7 @@ from test_support import load_script_module
 
 common = load_script_module("common")
 migrator = load_script_module("upgrade_target_workflow")
+LEGACY_INSTRUCTIONS = Path(__file__).resolve().parent / "fixtures/legacy_instructions"
 
 
 def make_target(root: Path) -> None:
@@ -500,7 +501,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
-            agents_v2 = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            agents_v2 = (LEGACY_INSTRUCTIONS / "AGENTS_0_9_0.md.tmpl").read_text(encoding="utf-8")
             agents_v2 = agents_v2.replace(
                 'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**|workflow-state plan archive|plan closure"',
                 'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**"',
@@ -515,7 +516,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             )
             agents_v1 = agents_v1.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
 
-            principles_v2 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
+            principles_v2 = (LEGACY_INSTRUCTIONS / "project_principles_0_9_0.md.tmpl").read_text(encoding="utf-8")
             new_rules = principles_v2.index('<!-- ew:invariant id="workflow.efficient-execution" -->')
             owned_refs = principles_v2.index("## Owned References", new_rules)
             principles_v1 = principles_v2[:new_rules] + principles_v2[owned_refs:]
@@ -600,7 +601,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
-            agents_v3 = (migrator.TEMPLATE_ROOT / "AGENTS.md.tmpl").read_text(encoding="utf-8")
+            agents_v3 = (LEGACY_INSTRUCTIONS / "AGENTS_0_9_0.md.tmpl").read_text(encoding="utf-8")
             agents_v2 = agents_v3.replace("instruction_contract_version: 3", "instruction_contract_version: 2")
             agents_v2 = agents_v2.replace(
                 'triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**|workflow-state plan archive|plan closure"',
@@ -611,7 +612,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             )
             agents_v2 = agents_v2.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
 
-            principles_v3 = (migrator.TEMPLATE_ROOT / "project_principles.md.tmpl").read_text(encoding="utf-8")
+            principles_v3 = (LEGACY_INSTRUCTIONS / "project_principles_0_9_0.md.tmpl").read_text(encoding="utf-8")
             review_start = principles_v3.index('<!-- ew:invariant id="workflow.review-before-commit" -->')
             wait_start = principles_v3.index('<!-- ew:invariant id="workflow.completion-driven-wait" -->', review_start)
             principles_v2 = principles_v3[:review_start] + principles_v3[wait_start:]
@@ -793,6 +794,119 @@ Status: active
             self.assertEqual(config.read_text(encoding="utf-8"), original)
             self.assertFalse((root / ".codex" / "agents").exists())
 
+    def test_prompt_upgrade_preserves_claude_settings_and_existing_codex_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            originals = {
+                "CLAUDE.md": b"# Native project instructions\nPreserve the project model configuration.\n",
+                ".claude/settings.json": b'{"model":"provider-custom-model","effortLevel":"high"}\n',
+                ".claude/agents/reviewer.md": b"---\nname: reviewer\ndescription: Native reviewer\nmodel: inherit\n---\nReview assigned files.\n",
+                ".codex/agents/reviewer.toml": b'name = "custom-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n',
+            }
+            for relative, content in originals.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            result = migrator.execute_prompt_upgrade(root, "0.9.1")
+
+            self.assertTrue(result["success"], result)
+            self.assertFalse(result["include_agent_config"])
+            for relative, content in originals.items():
+                self.assertEqual((root / relative).read_bytes(), content, relative)
+            self.assertFalse((root / ".codex/config.toml").exists())
+            self.assertFalse((root / ".codex/agents/utility.toml").exists())
+
+    def test_opted_in_agent_configuration_preserves_existing_reviewer_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            reviewer = root / ".codex/agents/reviewer.toml"
+            reviewer.parent.mkdir(parents=True)
+            original = 'name = "local-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n'
+            reviewer.write_text(original, encoding="utf-8")
+
+            result = migrator.apply_migration(root, "0.9.1", include_agent_config=True)
+
+            self.assertTrue(result["success"], result)
+            self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
+
+    def test_invalid_codex_config_blocks_only_requested_configuration_work(self):
+        for include_config in (False, True):
+            with self.subTest(include_config=include_config), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                make_target(root)
+                config = root / ".codex/config.toml"
+                config.parent.mkdir()
+                original = b"[agents\n"
+                config.write_bytes(original)
+                before = snapshot(root)
+
+                result = migrator.execute_prompt_upgrade(root, "0.9.1", include_agent_config=include_config)
+
+                self.assertEqual(config.read_bytes(), original)
+                if include_config:
+                    self.assertFalse(result["success"])
+                    self.assertEqual(snapshot(root), before)
+                    self.assertIn("invalid_codex_config", {item["type"] for item in result["conflicts"]})
+                else:
+                    self.assertTrue(result["success"], result)
+                    self.assertFalse((root / ".codex/agents").exists())
+
+    def test_symbolic_codex_config_is_preserved_without_configuration_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            (root / "native-settings.toml").write_text('model = "native-model"\n', encoding="utf-8")
+            config = root / ".codex/config.toml"
+            config.parent.mkdir()
+            config.symlink_to("../native-settings.toml")
+
+            report = migrator.build_migration_report(root, "0.9.1", include_agent_config=True)
+            self.assertTrue(report["required_user_questions"])
+            result = migrator.execute_prompt_upgrade(root, "0.9.1")
+
+            self.assertTrue(result["success"], result)
+            self.assertTrue(config.is_symlink())
+            self.assertEqual(os.readlink(config), "../native-settings.toml")
+            self.assertFalse((root / ".codex/agents").exists())
+
+    def test_pristine_090_templates_gain_execution_routes_but_customized_owners_are_preserved(self):
+        for customized in (False, True):
+            with self.subTest(customized=customized), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                make_target(root)
+                agents = (LEGACY_INSTRUCTIONS / "AGENTS_0_9_0.md.tmpl").read_text(encoding="utf-8")
+                agents = agents.replace("{{ entrypoint_hint }}", "README.md").replace("{{ subsystem_hint }}", ".")
+                principles = (LEGACY_INSTRUCTIONS / "project_principles_0_9_0.md.tmpl").read_text(encoding="utf-8")
+                if customized:
+                    agents += "\nProject-owned routing annotation.\n"
+                    principles += "\nProject-owned policy annotation.\n"
+                (root / "AGENTS.md").write_text(agents, encoding="utf-8")
+                owner = root / common.CANONICAL_FILES["principles"]
+                owner.write_text(principles, encoding="utf-8")
+
+                result = migrator.execute_prompt_upgrade(root, "0.9.1")
+
+                self.assertTrue(result["success"], result)
+                if customized:
+                    self.assertEqual((root / "AGENTS.md").read_text(encoding="utf-8"), agents)
+                    self.assertEqual(owner.read_text(encoding="utf-8"), principles)
+                else:
+                    graph = migrator.check_instruction_contract(root)
+                    self.assertTrue(graph["success"], graph)
+                    context = next(route for route in graph["routes"] if route["id"] == "execution-context")
+                    self.assertEqual(
+                        context["owners"],
+                        [
+                            "skill://engineering-workflow/references/platform_compatibility.md",
+                            "skill://engineering-workflow/references/question_matrix.md",
+                            "skill://engineering-workflow/references/agent_orchestration.md",
+                        ],
+                    )
+                    self.assertEqual(graph["contract_version"], 3)
+
     def test_structural_toml_merge_preserves_unknown_keys_and_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -811,6 +925,9 @@ Status: active
             self.assertIn("+max_depth = 1", result["config_diff"])
             for name in ("utility", "explorer", "reviewer"):
                 self.assertTrue((root / ".codex" / "agents" / f"{name}.toml").exists())
+            reviewer = tomllib.loads((root / ".codex/agents/reviewer.toml").read_text(encoding="utf-8"))
+            self.assertEqual(reviewer["model"], "gpt-" + "6-astra")
+            self.assertEqual(reviewer["model_reasoning_effort"], "high")
 
     def test_agents_header_comment_is_preserved_during_merge(self):
         text = "[agents] # keep this comment\nmax_threads = 3\n"

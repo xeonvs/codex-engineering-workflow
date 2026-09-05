@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -88,6 +89,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(utility["model_reasoning_effort"], "low")
         self.assertEqual(utility["sandbox_mode"], "read-only")
         self.assertEqual(explorer["sandbox_mode"], "read-only")
+        self.assertEqual(explorer["model"], utility["model"])
+        self.assertEqual(explorer["model_reasoning_effort"], "medium")
+        self.assertEqual(reviewer["model"], "gpt-" + "6-astra")
         self.assertEqual(reviewer["model_reasoning_effort"], "high")
         self.assertEqual(reviewer["sandbox_mode"], "read-only")
 
@@ -106,7 +110,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         owners = []
         for path in runtime_references.glob("*.md"):
             text = path.read_text(encoding="utf-8")
-            if "gpt-" + "5.6" in text:
+            if re.search(r"\bgpt-\d", text):
                 owners.append(path.name)
         self.assertEqual(owners, ["model_profiles.md"])
 

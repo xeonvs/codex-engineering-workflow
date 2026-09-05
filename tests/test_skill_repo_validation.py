@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.9.0"
+CURRENT_VERSION = "0.9.1"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -200,11 +200,59 @@ class SkillRepoValidationTests(unittest.TestCase):
             root = Path(tmp)
             self._copy_repo_subset(root)
             path = root / "skill" / "engineering-workflow" / "references" / "merge_policy.md"
-            model = "gpt-" + "5.6-" + "terra"
+            model = "gpt-" + "6-astra"
             path.write_text(path.read_text(encoding="utf-8") + f"\nModel: `{model}`.\n", encoding="utf-8")
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
             self.assertTrue(any("Concrete model mapping" in item for item in result["errors"]))
+
+    def test_shared_frontmatter_rejects_native_platform_overrides(self):
+        fields = {
+            "model": "provider-model",
+            "effort": "high",
+            "context": "fork",
+            "agent": "custom-agent",
+            "allowed-tools": "Bash",
+            "disallowed-tools": "AskUserQuestion",
+            "hooks": "{}",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            path = root / "skill/engineering-workflow/SKILL.md"
+            original = path.read_text(encoding="utf-8")
+            for field, value in fields.items():
+                with self.subTest(field=field):
+                    path.write_text(original.replace("---\n", f"---\n{field}: {value}\n", 1), encoding="utf-8")
+                    errors, _version = validate_skill_repo._validate_skill_router(root)
+                    self.assertTrue(any("preserve native platform settings" in error for error in errors), errors)
+            for key in ('"model"', "'model'", "model ", '"\\u006dodel"'):
+                with self.subTest(key=key):
+                    path.write_text(original.replace("---\n", f"---\n{key}: provider-model\n", 1), encoding="utf-8")
+                    errors, _version = validate_skill_repo._validate_skill_router(root)
+                    self.assertTrue(any("preserve native platform settings" in error for error in errors), errors)
+            path.write_text(original, encoding="utf-8")
+            errors, _version = validate_skill_repo._validate_skill_router(root)
+            self.assertEqual(errors, [])
+
+    def test_profile_drift_and_unsupported_astra_effort_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            agents = root / "skill/engineering-workflow/assets/agents"
+            reviewer = agents / "reviewer.toml.tmpl"
+            original = reviewer.read_text(encoding="utf-8")
+            variants = (
+                original.replace("gpt-" + "6-astra", "gpt-" + "5.6"),
+                original.replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "none"'),
+                original.replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "minimal"'),
+            )
+            for index, variant in enumerate(variants):
+                with self.subTest(variant=index):
+                    reviewer.write_text(variant, encoding="utf-8")
+                    self.assertTrue(validate_skill_repo._validate_agent_profiles(root))
+            reviewer.write_text(original, encoding="utf-8")
+            self.assertEqual(validate_skill_repo._validate_agent_profiles(root), [])
 
     def test_invented_pro_slug_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

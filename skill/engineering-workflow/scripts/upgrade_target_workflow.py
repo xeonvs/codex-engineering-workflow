@@ -55,6 +55,11 @@ TARGET_VERSION_RE = re.compile(
 )
 LEGACY_PRISTINE_HASHES = {
     "AGENTS.md": {
+        "a8d95f1fa60b6d1e5e2adebf26003bae3cfeb1528f375e4b2579adc25ad58024",
+        "8677f495bb2c8017d3cd4e76ab87e5a4390a3d4e8d2127b8c8450c92f1fbc5b7",
+        "ab74ed6dfce15e498efe3a55e8282b9b7e02e0e4aab43853dfb3caa51d567001",
+        "8a13b033b75df46fa8a008528a6351d5a47c79dbc6d97db15f34ceca60aeaa03",
+        "a278e6ba650f8f78b7379ab72a0f6d5c10bfedea672aed6c9e1b017c05d886da",
         "c27a53d5105daae7e45ffb078d6441f19ee4285600a0fed9df776656f13bbb12",
         "6382547ce3e2d80a07aadf5dad93dba89dbdf8ab986a14674d49f802bc857037",
         "93dc99b298ff407c9e2d33b6fc1070fbdcb0d1073f4ec8726f6713409524c3a1",
@@ -67,6 +72,7 @@ LEGACY_PRISTINE_HASHES = {
         "cc1e93e5ecf382d71c16212fcb7b94dacb604616e716f6d4d476c112e0392070",
     },
     CANONICAL_FILES["principles"]: {
+        "c37b57e9c654e36c5e4269b0e9f43b736d25ba11b9894d4784c24a95c9fe47fe",
         "cb72c47c3d9d7165eaeedfcded0d222a1d558ec90440887bf8569862b307b5aa",
         "9c54b3d5b7cddee93c9de05e75035f0750527bc0e86fe985b2cda95ede9ceb9f",
         "3aecc1a616fd3e9fca15febef9199e001548d3c40e6c256bef706a37a59f8d78",
@@ -541,7 +547,7 @@ def _existing_active_conflict(plans_text: str) -> str | None:
     return None
 
 
-def _scan_contract_conflicts(root: Path) -> list[dict[str, str]]:
+def _scan_contract_conflicts(root: Path, include_agent_config: bool = False) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     patterns = (
         ("compressed_plan_rule", re.compile(r"\b(?:lightweight|compact|short)\s+(?:active\s+)?plan\b", re.IGNORECASE)),
@@ -556,9 +562,10 @@ def _scan_contract_conflicts(root: Path) -> list[dict[str, str]]:
         "AGENTS.md",
         *CANONICAL_FILES.values(),
         STATE_MANIFEST_PATH,
-        ".codex/config.toml",
     }
-    canonical_mutation_paths.update(f".codex/agents/{name}.toml" for name in ("utility", "explorer", "reviewer"))
+    if include_agent_config:
+        canonical_mutation_paths.add(".codex/config.toml")
+        canonical_mutation_paths.update(f".codex/agents/{name}.toml" for name in ("utility", "explorer", "reviewer"))
     reported_symlinks = set()
     for relative in sorted(canonical_mutation_paths):
         symlink_component = _first_symlink_component(root, relative)
@@ -572,7 +579,7 @@ def _scan_contract_conflicts(root: Path) -> list[dict[str, str]]:
                 }
             )
     agents_dir = root / ".codex" / "agents"
-    if agents_dir.is_dir() and not _first_symlink_component(root, ".codex/agents"):
+    if include_agent_config and agents_dir.is_dir() and not _first_symlink_component(root, ".codex/agents"):
         for path in agents_dir.glob("*.toml"):
             if path.is_symlink():
                 findings.append(
@@ -610,7 +617,7 @@ def _scan_contract_conflicts(root: Path) -> list[dict[str, str]]:
             findings.append({"type": "unrelated_active_plan", "path": "PLANS.md", "detail": conflict})
 
     config = root / ".codex" / "config.toml"
-    if config.exists() and not _first_symlink_component(root, ".codex/config.toml"):
+    if include_agent_config and config.exists() and not _first_symlink_component(root, ".codex/config.toml"):
         text = _read(config)
         try:
             data = tomllib.loads(text)
@@ -728,7 +735,7 @@ def build_migration_report(
     if not root.is_dir():
         raise MigrationConflict("missing_repository", "Target repository does not exist")
     audit = audit_repo(root)
-    conflicts = _scan_contract_conflicts(root)
+    conflicts = _scan_contract_conflicts(root, include_agent_config=include_agent_config)
     state_text = _read(root / STATE_MANIFEST_PATH)
     if state_text and not _first_symlink_component(root, STATE_MANIFEST_PATH):
         try:
@@ -1546,7 +1553,7 @@ def main() -> int:
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--prompt", action="store_true")
-    parser.add_argument("--target-version", default="0.9.0")
+    parser.add_argument("--target-version", default="0.9.1")
     parser.add_argument("--include-agent-config", action="store_true")
     parser.add_argument(
         "--approve-privacy-review",

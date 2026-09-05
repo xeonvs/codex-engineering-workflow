@@ -16,8 +16,11 @@ This file is local guidance for agents developing this repository. It is not par
 
 ## Task Routing
 
+Reference paths beginning with `references/` below resolve under `skill/engineering-workflow/` in this repository.
+
 | Trigger or changed area | Read before editing | Required gate |
 | --- | --- | --- |
+| Every task, including scope questions, steering, delegation, or handoff | `skill/engineering-workflow/references/platform_compatibility.md` first; then `references/question_matrix.md` and the platform-selected shared sections of `references/agent_orchestration.md` | Review native host behavior, established authorization, task continuity, and evidence |
 | Runtime routing or public skill behavior | `skill/engineering-workflow/SKILL.md` and the directly linked canonical reference | Structural validator and affected behavioral tests |
 | Plan, backlog, closure, archive, or index behavior | `references/planning_and_backlog.md`, plan/index templates, lifecycle scripts and tests | Plan lifecycle tests plus target validation |
 | AGENTS, principles, pitfalls, provider/UI/operations ownership | `references/instruction_lifecycle.md`, related templates, instruction validator and tests | Instruction graph check plus migration tests |
@@ -30,6 +33,7 @@ This file is local guidance for agents developing this repository. It is not par
 
 ## Working Contract
 
+- Apply every matching route. Resolve platform behavior and any question or continuation decision through the canonical owners above; root maintainer guidance does not redefine those policies or change native model/effort settings.
 - Audit before editing. Preserve user-owned files and unrelated working-tree changes.
 - For repository-changing work, materialize a full active `PLANS.md` before implementation. After compaction, interruption, resume, or milestone closure, reconcile plan, queue, validation, backlog, indexes, and working tree before continuing.
 - Keep each detailed invariant under one canonical owner. Routers and incident catalogs link to it instead of restating it.
