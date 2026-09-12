@@ -6,6 +6,7 @@ Use this file for active, blocked, ready-for-closure, or recently completed exec
 
 ## Recently Completed
 
+- [x] 2026-09-12: Completed Engineering Workflow 0.9.2 Current-State Efficiency And Agent-Neutral Continuation; [full archived plan](docs/archive/plans/2026-09-12-engineering-workflow-0-9-2-current-state-efficiency-and-agent-neutral-continuati.md).
 - [x] 2026-09-05: Completed Engineering Workflow 0.9.1 Astra And Claude Compatibility; [full archived plan](docs/archive/plans/2026-09-05-engineering-workflow-0-9-1-astra-and-claude-compatibility.md).
 - [x] 2026-08-29: Completed Engineering Workflow 0.9.0 Ownership-Aware Closure And Review Discipline; [full archived plan](docs/archive/plans/2026-08-29-engineering-workflow-0-9-0-ownership-aware-closure-and-review-discipline.md).
 - [x] 2026-08-29: Completed Add Dynamic Release Version Badge.
@@ -15,4 +16,3 @@ Use this file for active, blocked, ready-for-closure, or recently completed exec
 - [x] 2026-08-16: Completed PTC Partial-Evidence Closure Correction 0.7.0.
 - [x] 2026-08-16: Completed Programmatic Tool Calling Runtime Contract 0.7.0; [full archived plan](docs/archive/plans/2026-08-16-programmatic-tool-calling-runtime-contract-0-7-0.md).
 - [x] 2026-08-13: Completed Remove CI Runtime Deprecation.
-- [x] 2026-08-13: Completed Complete Engineering Workflow 0.6.0 Publication.

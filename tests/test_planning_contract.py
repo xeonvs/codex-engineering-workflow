@@ -78,19 +78,26 @@ class PlanningContractTests(unittest.TestCase):
             self.assertIn(marker, skill)
         self.assertIn("Plan Mode is one possible plan source, not a prerequisite", reference)
 
-    def test_reconciliation_semantics_cover_every_resume_boundary(self):
+    def test_continuity_and_recovery_have_distinct_reconciliation_scopes(self):
         text = REFERENCE.read_text(encoding="utf-8")
-        for boundary in (
-            "context compaction",
-            "interruption",
-            "resume",
-            "milestone closure",
-            "subagent handoff",
-            "new Codex session",
-        ):
-            self.assertIn(boundary, text)
+        self.assertIn("## Continuity And Recovery Reconciliation", text)
+        self.assertIn("ordinary milestone or subagent return", text)
+        self.assertIn("does not require rereading the entire plan", text)
+        self.assertIn("actual context compaction that lost material task context", text)
+        self.assertIn("interruption with uncertain outcome", text)
+        self.assertIn("handoff to another root", text)
+        self.assertIn("never repeat a side-effecting action blindly", text)
         for status in ("active", "ready_for_closure", "done", "in_progress", "blocked", "out_of_scope"):
             self.assertIn(f"`{status}`", text)
+
+    def test_current_state_updates_are_event_driven_not_periodic(self):
+        reference = REFERENCE.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("not through a separate periodic plan-maintenance loop", reference)
+        self.assertIn("do not rewrite the plan", reference)
+        self.assertIn("new verified fact supersedes", reference)
+        self.assertIn("do not add activity-only rewrites", template)
+        self.assertIn("do not restate the whole plan", template)
 
     def test_stale_completed_state_is_behaviorally_detected(self):
         text = """# Execution Plans

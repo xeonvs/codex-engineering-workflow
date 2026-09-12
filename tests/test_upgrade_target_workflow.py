@@ -142,6 +142,33 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertIn('skill_version: "0.5.1"', manifest_text)
             self.assertIn("orchestration_contract_version: 3", manifest_text)
 
+    def test_current_valid_target_is_a_noop_but_missing_artifact_is_repaired(self):
+        for mode, include_config in (("apply", False), ("prompt", False), ("apply", True), ("prompt", True)):
+            with self.subTest(mode=mode, include_config=include_config), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                make_target(root)
+                first = migrator.apply_migration(root, "0.9.2", include_agent_config=include_config)
+                self.assertTrue(first["success"], first)
+                before = snapshot(root)
+
+                if mode == "apply":
+                    current = migrator.apply_migration(root, "0.9.2", include_agent_config=include_config)
+                else:
+                    current = migrator.execute_prompt_upgrade(root, "0.9.2", include_agent_config=include_config)
+
+                self.assertTrue(current["success"], current)
+                self.assertEqual(current["update_status"], "already_current")
+                self.assertEqual(current["mutation_log"], [])
+                self.assertEqual(snapshot(root), before)
+
+                if mode == "prompt" and not include_config:
+                    backlog = root / common.CANONICAL_FILES["backlog"]
+                    backlog.unlink()
+                    repaired = migrator.execute_prompt_upgrade(root, "0.9.2")
+                    self.assertTrue(repaired["success"], repaired)
+                    self.assertEqual(repaired["update_status"], "updated")
+                    self.assertTrue(backlog.is_file())
+
     def test_prompt_upgrade_asks_one_question_without_writes_on_conflict(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -809,7 +836,7 @@ Status: active
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
 
-            result = migrator.execute_prompt_upgrade(root, "0.9.1")
+            result = migrator.execute_prompt_upgrade(root, "0.9.2")
 
             self.assertTrue(result["success"], result)
             self.assertFalse(result["include_agent_config"])
@@ -827,7 +854,7 @@ Status: active
             original = 'name = "local-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n'
             reviewer.write_text(original, encoding="utf-8")
 
-            result = migrator.apply_migration(root, "0.9.1", include_agent_config=True)
+            result = migrator.apply_migration(root, "0.9.2", include_agent_config=True)
 
             self.assertTrue(result["success"], result)
             self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
@@ -843,7 +870,7 @@ Status: active
                 config.write_bytes(original)
                 before = snapshot(root)
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.1", include_agent_config=include_config)
+                result = migrator.execute_prompt_upgrade(root, "0.9.2", include_agent_config=include_config)
 
                 self.assertEqual(config.read_bytes(), original)
                 if include_config:
@@ -863,9 +890,9 @@ Status: active
             config.parent.mkdir()
             config.symlink_to("../native-settings.toml")
 
-            report = migrator.build_migration_report(root, "0.9.1", include_agent_config=True)
+            report = migrator.build_migration_report(root, "0.9.2", include_agent_config=True)
             self.assertTrue(report["required_user_questions"])
-            result = migrator.execute_prompt_upgrade(root, "0.9.1")
+            result = migrator.execute_prompt_upgrade(root, "0.9.2")
 
             self.assertTrue(result["success"], result)
             self.assertTrue(config.is_symlink())
@@ -887,7 +914,7 @@ Status: active
                 owner = root / common.CANONICAL_FILES["principles"]
                 owner.write_text(principles, encoding="utf-8")
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.1")
+                result = migrator.execute_prompt_upgrade(root, "0.9.2")
 
                 self.assertTrue(result["success"], result)
                 if customized:

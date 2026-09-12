@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.9.1"
+CURRENT_VERSION = "0.9.2"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -178,7 +178,9 @@ class SkillRepoValidationTests(unittest.TestCase):
             self._copy_repo_subset(root)
             path = root / "skill" / "engineering-workflow" / "references" / "planning_and_backlog.md"
             path.write_text(
-                path.read_text(encoding="utf-8").replace("## Resume And Milestone Reconciliation", "## State Review"),
+                path.read_text(encoding="utf-8").replace(
+                    "## Continuity And Recovery Reconciliation", "## State Review"
+                ),
                 encoding="utf-8",
             )
             result = validate_skill_repo.validate_skill_repo(root)

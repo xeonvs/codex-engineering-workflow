@@ -222,8 +222,8 @@ def closure_issues(text: str, *, require_ready: bool = False, archived: bool = F
         validation_dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", validation)
         if not updated_match:
             issues.append("Last Updated must be an ISO date before closure")
-        elif not validation_dates or max(validation_dates) < updated_match.group(1):
-            issues.append("final validation predates the last content update")
+        if not validation_dates:
+            issues.append("final validation evidence must include an ISO date")
     for section in ("Plan Fidelity Check", "Reconciliation Check", "Closure Gate"):
         body = _section_text(text, section)
         if (require_ready or status in {"ready_for_closure", "done"}) and re.search(r"(?m)^\s*-\s*\[ \]", body):

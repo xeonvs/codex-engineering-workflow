@@ -81,10 +81,15 @@ class PlanLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(any("pseudo-terminal" in item or "invalid" in item for item in issues))
 
-    def test_validation_must_not_predate_last_update(self):
+    def test_later_plan_bookkeeping_date_does_not_invalidate_dated_evidence(self):
         text = ready_plan().replace("Last Updated: 2026-08-13", "Last Updated: 2026-08-14")
         issues = lifecycle.closure_issues(text, require_ready=True)
-        self.assertTrue(any("predates" in item for item in issues))
+        self.assertEqual(issues, [])
+
+    def test_final_validation_evidence_requires_its_own_date(self):
+        text = ready_plan().replace("2026-08-13: lifecycle validation passed.", "Lifecycle validation passed.")
+        issues = lifecycle.closure_issues(text, require_ready=True)
+        self.assertIn("final validation evidence must include an ISO date", issues)
 
     def test_unclassified_future_delivery_blocks_closure(self):
         text = ready_plan().replace(

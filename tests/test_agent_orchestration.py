@@ -50,6 +50,12 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("ask one targeted question", text)
         self.assertIn("never repeat completed calls", text)
         self.assertIn("final assistant message as separate outputs", text)
+        self.assertIn("Do not create a helper or Programmatic Tool Calling descriptor", text)
+
+    def test_sufficient_result_stops_extra_reads_and_delegation(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("Stop when the declared result and required evidence are sufficient", text)
+        self.assertIn("available extra read, tool, or delegation is not a reason to continue", text)
 
     def test_root_owns_shared_state_and_final_synthesis(self):
         text = REFERENCE.read_text(encoding="utf-8")
@@ -80,6 +86,14 @@ class AgentOrchestrationTests(unittest.TestCase):
             "retry budget",
         ):
             self.assertIn(field, text)
+
+    def test_subagent_return_and_external_orchestrator_preserve_root_ownership(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("does not transfer the established root's ownership automatically", text)
+        self.assertIn("different workspace, loaded instructions, task context, and file access", text)
+        self.assertIn("same root with current context is a continuity event", text)
+        self.assertIn("not a recovery or ownership handoff", text)
+        self.assertIn("Do not delegate duplicate reading", text)
 
     def test_optional_profiles_use_expected_safety_defaults(self):
         utility = tomllib.loads((AGENTS / "utility.toml.tmpl").read_text(encoding="utf-8"))
