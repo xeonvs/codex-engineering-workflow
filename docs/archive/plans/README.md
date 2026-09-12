@@ -12,4 +12,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-08-29-engineering-workflow-0-9-0-ownership-aware-closure-and-review-discipline.md](2026-08-29-engineering-workflow-0-9-0-ownership-aware-closure-and-review-discipline.md)
 - [2026-09-05-engineering-workflow-0-9-1-astra-and-claude-compatibility.md](2026-09-05-engineering-workflow-0-9-1-astra-and-claude-compatibility.md)
 - [2026-09-12-engineering-workflow-0-9-2-current-state-efficiency-and-agent-neutral-continuati.md](2026-09-12-engineering-workflow-0-9-2-current-state-efficiency-and-agent-neutral-continuati.md)
+- [2026-09-12-engineering-workflow-0-9-3-preserve-customized-plan-sections-on-closure.md](2026-09-12-engineering-workflow-0-9-3-preserve-customized-plan-sections-on-closure.md)
 <!-- engineering-workflow:index:end -->

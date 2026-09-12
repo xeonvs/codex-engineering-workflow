@@ -137,6 +137,31 @@ class PlanLifecycleTests(unittest.TestCase):
             self.assertIsNone(result["archive_path"])
             self.assertFalse((root / "docs/archive").exists())
 
+    def test_closure_preserves_custom_sibling_sections_around_active_plan(self):
+        for disposition in ("compact", "archive"):
+            with self.subTest(disposition=disposition), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                text = ready_plan().replace(
+                    "## Active Plan: Lifecycle Demo",
+                    "## Repository Context\n\nKeep repository-owned context.\n\n## Active Plan: Lifecycle Demo",
+                    1,
+                )
+                text = text.split("\n## Recently Completed", 1)[0]
+                text += "\n\n## Completed Work\n\nKeep the exact historical result.\n"
+                (root / "PLANS.md").write_text(text, encoding="utf-8")
+
+                result = lifecycle.close_plan(root, disposition)
+
+                closed = (root / "PLANS.md").read_text(encoding="utf-8")
+                self.assertIn("## Repository Context\n\nKeep repository-owned context.", closed)
+                self.assertIn("## Completed Work\n\nKeep the exact historical result.", closed)
+                self.assertLess(closed.index("## Repository Context"), closed.index("## Recently Completed"))
+                self.assertLess(closed.index("## Recently Completed"), closed.index("## Completed Work"))
+                self.assertNotIn("## Active Plan:", closed)
+                if disposition == "archive":
+                    self.assertTrue((root / result["archive_path"]).is_file())
+                self.assertTrue(lifecycle.check_plan_lifecycle(root)["success"])
+
     def test_atomic_failure_restores_original_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
