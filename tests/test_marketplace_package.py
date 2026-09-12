@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,7 @@ class MarketplacePackageTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(result["success"], result)
-        self.assertEqual(result["version"], "0.9.3")
+        self.assertEqual(result["version"], "0.9.4")
         self.assertEqual(result["drift"], [])
 
     def test_check_detects_packaged_skill_byte_drift(self):
@@ -110,14 +111,44 @@ class MarketplacePackageTests(unittest.TestCase):
             (REPO_ROOT / "plugins/engineering-workflow/.claude-plugin/plugin.json").read_text(encoding="utf-8")
         )
         for manifest in (codex, claude):
-            self.assertEqual(manifest["version"], "0.9.3")
+            self.assertEqual(manifest["version"], "0.9.4")
             self.assertEqual(manifest["repository"], builder.REPOSITORY_URL)
             self.assertNotIn("mcpServers", manifest)
             self.assertNotIn("apps", manifest)
             self.assertNotIn("hooks", manifest)
         self.assertEqual(codex["skills"], "./skills/")
         self.assertEqual(codex["interface"]["category"], "Developer Tools")
+        self.assertEqual(codex["interface"]["brandColor"], "#3972F6")
+        for field in ("composerIcon", "logo", "logoDark"):
+            relative = codex["interface"][field].removeprefix("./")
+            self.assertTrue((REPO_ROOT / "plugins/engineering-workflow" / relative).is_file())
+            self.assertNotIn(field, claude)
         self.assertNotIn("category", claude)
+
+    def test_brand_assets_are_opaque_and_have_expected_dimensions(self):
+        source = REPO_ROOT / "skill/engineering-workflow/assets/brand"
+        expected = {
+            "composer-icon.png": (128, 128),
+            "logo.png": (1024, 1024),
+            "logo-dark.png": (1024, 1024),
+        }
+        for name, dimensions in expected.items():
+            data = (source / name).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            width, height, bit_depth, color_type, compression, filtering, interlace = struct.unpack(
+                ">IIBBBBB", data[16:29]
+            )
+            self.assertEqual((width, height), dimensions)
+            self.assertEqual((bit_depth, color_type), (8, 2))
+            self.assertEqual((compression, filtering, interlace), (0, 0, 0))
+        self.assertEqual((source / "logo.png").read_bytes(), (source / "logo-dark.png").read_bytes())
+        svg = (source / "logo.svg").read_text(encoding="utf-8")
+        for forbidden in ("<linearGradient", "<radialGradient", "opacity=", "<filter", "<mask"):
+            self.assertNotIn(forbidden, svg)
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('src="skill/engineering-workflow/assets/brand/logo.svg"', readme)
+        self.assertIn('alt="Engineering Workflow"', readme)
+        self.assertIn('width="160"', readme)
 
 
 if __name__ == "__main__":
