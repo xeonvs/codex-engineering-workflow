@@ -61,6 +61,10 @@ def _codex_manifest(version: str) -> dict[str, Any]:
             "category": "Developer Tools",
             "capabilities": ["Interactive", "Read", "Write"],
             "websiteURL": REPOSITORY_URL,
+            "brandColor": "#3972F6",
+            "composerIcon": "./skills/engineering-workflow/assets/brand/composer-icon.png",
+            "logo": "./skills/engineering-workflow/assets/brand/logo.png",
+            "logoDark": "./skills/engineering-workflow/assets/brand/logo-dark.png",
             "defaultPrompt": [
                 "Audit this repository's engineering workflow.",
                 "Upgrade this repository's workflow safely.",
