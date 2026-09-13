@@ -14,4 +14,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-09-12-engineering-workflow-0-9-2-current-state-efficiency-and-agent-neutral-continuati.md](2026-09-12-engineering-workflow-0-9-2-current-state-efficiency-and-agent-neutral-continuati.md)
 - [2026-09-12-engineering-workflow-0-9-3-preserve-customized-plan-sections-on-closure.md](2026-09-12-engineering-workflow-0-9-3-preserve-customized-plan-sections-on-closure.md)
 - [2026-09-12-engineering-workflow-0-9-4-plugin-brand-icon.md](2026-09-12-engineering-workflow-0-9-4-plugin-brand-icon.md)
+- [2026-09-13-astra-workflow-instruction-efficiency.md](2026-09-13-astra-workflow-instruction-efficiency.md)
 <!-- engineering-workflow:index:end -->

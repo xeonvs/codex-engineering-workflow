@@ -20,13 +20,16 @@ Reference paths beginning with `references/` below resolve under `skill/engineer
 
 | Trigger or changed area | Read before editing | Required gate |
 | --- | --- | --- |
-| Every task, including scope questions, steering, delegation, or handoff | `skill/engineering-workflow/references/platform_compatibility.md` first; then `references/question_matrix.md` and the host-compatible shared sections of `references/agent_orchestration.md` | Review native host behavior, established authorization, task continuity, and evidence |
+| Host or capability uncertainty | `references/platform_compatibility.md` | Resolve only the uncertain host behavior; reuse established session facts |
+| Material clarification or additional authorization | `references/question_matrix.md` | Check existing authorization and available evidence before asking |
+| Delegation, context recovery, or execution handoff | Relevant shared sections of `references/agent_orchestration.md` | Scope, ownership, and completion evidence |
 | Runtime routing or public skill behavior | `skill/engineering-workflow/SKILL.md` and the directly linked canonical reference | Structural validator and affected behavioral tests |
 | Plan, backlog, closure, archive, or index behavior | `references/planning_and_backlog.md`, plan/index templates, lifecycle scripts and tests | Plan lifecycle tests plus target validation |
 | AGENTS, principles, pitfalls, provider/UI/operations ownership | `references/instruction_lifecycle.md`, related templates, instruction validator and tests | Instruction graph check plus migration tests |
 | Installed-skill refresh or update | `references/skill_update.md`, updater and updater tests | Candidate-tree and rollback matrix |
 | Target workflow upgrade | `references/target_workflow_upgrade.md`, audit/common/upgrader code and tests | Report/apply/prompt migration matrix |
-| Validation, command execution, or privacy | `references/validation_safety.md`, `references/privacy_and_sanitization.md`, related scripts and tests | Safety matrix and public-tree scan |
+| Validation policy or command-classifier changes | `references/validation_safety.md`, related scripts and tests | Affected safety matrix |
+| Public-content sanitization or push | `references/privacy_and_sanitization.md`, related scanner | Required public-tree and pre-push scans |
 | Agent orchestration or model mapping | `references/agent_orchestration.md`, `references/model_profiles.md`, agent templates and tests | Ownership/model-profile validation |
 | Long-running execution or execution-efficiency rules | `references/agent_orchestration.md`, then `references/validation_safety.md` | Completion/result-integrity and affected behavioral tests |
 | Version or release contract | `SKILL.md`, root `README.md`, upgrader defaults, state template, CI and version tests | Full gate and active-version search |
@@ -44,16 +47,18 @@ Reference paths beginning with `references/` below resolve under `skill/engineer
 
 ## Local Validation
 
-Install the pinned root-only tooling once, run the narrowest affected layer while iterating, then run the complete gate:
+Use one environment with the pinned root-only tooling. Select the narrowest affected profile while iterating; the examples below are alternatives, not a required sequence. Run `full` on the completed implementation. A read-only answer does not require implementation checks.
 
 ```bash
 python3 -m pip install --requirement requirements-dev.txt
-python3 scripts/dev_check.py focused --test-pattern test_plan_lifecycle.py
-python3 scripts/dev_check.py contracts
-python3 scripts/dev_check.py full
+python3 scripts/dev_check.py focused --test-pattern test_plan_lifecycle.py  # one affected suite
+python3 scripts/dev_check.py contracts  # affected cross-contract changes
+python3 scripts/dev_check.py full  # final implementation gate; includes the suites above
 ```
 
 The harness forces `PYTHONDONTWRITEBYTECODE=1`, writes complete child output only to a private task-owned temporary directory, and prints a bounded status summary. It stops on the first failure by default. Raw failure tails require explicit `--show-failure-tail`; do not request them when output may contain private values. `format --fix` is the only mutating profile. The root harness and its Ruff configuration are repository-maintenance tools: never copy them into `skill/engineering-workflow`, target templates, generated marketplace skill bytes, or target migrations.
+
+The local unit tests use disposable fixtures and no production services. A request to implement a change authorizes these checks and affected reruns without separate approval. External integrations and publication retain their own authorization boundaries.
 
 Immediately before every authorized push, run `python3 scripts/dev_check.py security` against the final staged/public state. This pre-push gate includes the public-tree privacy scan plus fully redacted Gitleaks scans of the current tree and all reachable refs. A failure blocks the push: classify it without exposing the value, revoke or replace a real credential first, remove the source occurrence, and rescan. Rewrite published history only for a confirmed historical secret and only with explicit authorization, recovery refs, object-ID-pinned `force-with-lease`, and post-rewrite scans. The `release` profile composes `full` and `security`; external plugin validators remain separate because they depend on maintainer tooling.
 
