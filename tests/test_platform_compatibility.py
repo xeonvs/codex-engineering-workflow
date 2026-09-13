@@ -19,10 +19,10 @@ class PlatformCompatibilityTests(unittest.TestCase):
         self.assertIn("Programmatic Tool Calling", text)
         self.assertIn("do not mutate Codex runtime configuration", text)
 
-    def test_shared_skill_routes_platform_before_other_work(self):
+    def test_shared_skill_preserves_host_selection_before_scoped_audit(self):
         text = SKILL.read_text(encoding="utf-8")
         platform_step = text.index("Read `references/platform_compatibility.md`")
-        audit_step = text.index("Run `scripts/repo_audit.py`")
+        audit_step = text.index("run `scripts/repo_audit.py`")
         self.assertLess(platform_step, audit_step)
         self.assertIn("select a Codex or Claude Code branch only when the actual host establishes it", text)
         self.assertIn(

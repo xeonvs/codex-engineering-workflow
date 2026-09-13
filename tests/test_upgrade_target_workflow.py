@@ -147,14 +147,14 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             with self.subTest(mode=mode, include_config=include_config), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 make_target(root)
-                first = migrator.apply_migration(root, "0.9.4", include_agent_config=include_config)
+                first = migrator.apply_migration(root, "0.9.5", include_agent_config=include_config)
                 self.assertTrue(first["success"], first)
                 before = snapshot(root)
 
                 if mode == "apply":
-                    current = migrator.apply_migration(root, "0.9.4", include_agent_config=include_config)
+                    current = migrator.apply_migration(root, "0.9.5", include_agent_config=include_config)
                 else:
-                    current = migrator.execute_prompt_upgrade(root, "0.9.4", include_agent_config=include_config)
+                    current = migrator.execute_prompt_upgrade(root, "0.9.5", include_agent_config=include_config)
 
                 self.assertTrue(current["success"], current)
                 self.assertEqual(current["update_status"], "already_current")
@@ -164,7 +164,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 if mode == "prompt" and not include_config:
                     backlog = root / common.CANONICAL_FILES["backlog"]
                     backlog.unlink()
-                    repaired = migrator.execute_prompt_upgrade(root, "0.9.4")
+                    repaired = migrator.execute_prompt_upgrade(root, "0.9.5")
                     self.assertTrue(repaired["success"], repaired)
                     self.assertEqual(repaired["update_status"], "updated")
                     self.assertTrue(backlog.is_file())
@@ -836,7 +836,7 @@ Status: active
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
 
-            result = migrator.execute_prompt_upgrade(root, "0.9.4")
+            result = migrator.execute_prompt_upgrade(root, "0.9.5")
 
             self.assertTrue(result["success"], result)
             self.assertFalse(result["include_agent_config"])
@@ -854,7 +854,7 @@ Status: active
             original = 'name = "local-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n'
             reviewer.write_text(original, encoding="utf-8")
 
-            result = migrator.apply_migration(root, "0.9.4", include_agent_config=True)
+            result = migrator.apply_migration(root, "0.9.5", include_agent_config=True)
 
             self.assertTrue(result["success"], result)
             self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
@@ -870,7 +870,7 @@ Status: active
                 config.write_bytes(original)
                 before = snapshot(root)
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.4", include_agent_config=include_config)
+                result = migrator.execute_prompt_upgrade(root, "0.9.5", include_agent_config=include_config)
 
                 self.assertEqual(config.read_bytes(), original)
                 if include_config:
@@ -890,9 +890,9 @@ Status: active
             config.parent.mkdir()
             config.symlink_to("../native-settings.toml")
 
-            report = migrator.build_migration_report(root, "0.9.4", include_agent_config=True)
+            report = migrator.build_migration_report(root, "0.9.5", include_agent_config=True)
             self.assertTrue(report["required_user_questions"])
-            result = migrator.execute_prompt_upgrade(root, "0.9.4")
+            result = migrator.execute_prompt_upgrade(root, "0.9.5")
 
             self.assertTrue(result["success"], result)
             self.assertTrue(config.is_symlink())
@@ -914,7 +914,7 @@ Status: active
                 owner = root / common.CANONICAL_FILES["principles"]
                 owner.write_text(principles, encoding="utf-8")
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.4")
+                result = migrator.execute_prompt_upgrade(root, "0.9.5")
 
                 self.assertTrue(result["success"], result)
                 if customized:
@@ -926,13 +926,93 @@ Status: active
                     context = next(route for route in graph["routes"] if route["id"] == "execution-context")
                     self.assertEqual(
                         context["owners"],
-                        [
-                            "skill://engineering-workflow/references/platform_compatibility.md",
-                            "skill://engineering-workflow/references/question_matrix.md",
-                            "skill://engineering-workflow/references/agent_orchestration.md",
-                        ],
+                        ["skill://engineering-workflow/references/platform_compatibility.md"],
+                    )
+                    self.assertNotIn("**", context["triggers"])
+                    routes = {route["id"]: route for route in graph["routes"]}
+                    self.assertEqual(
+                        routes["scope-decision"]["owners"],
+                        ["skill://engineering-workflow/references/question_matrix.md"],
+                    )
+                    self.assertEqual(
+                        routes["task-handoff"]["owners"],
+                        ["skill://engineering-workflow/references/agent_orchestration.md"],
                     )
                     self.assertEqual(graph["contract_version"], 3)
+
+    def test_prior_pristine_routes_upgrade_and_customized_routes_remain_owned(self):
+        # Reconstruct only the changed prior blocks; hashes pin the actual released bytes.
+        # Custom-byte preservation tests backend ownership, not semantic adoption;
+        # the prompt workflow reviews affected customized owners before apply.
+        old_route = (
+            '<!-- ew:route id="execution-context" triggers="**" '
+            'owners="skill://engineering-workflow/references/platform_compatibility.md|'
+            "skill://engineering-workflow/references/question_matrix.md|"
+            'skill://engineering-workflow/references/agent_orchestration.md" '
+            'guards="manual_review:verify native host behavior scope authorization task continuity and handoff" -->\n'
+            "| `execution-context` | every task, including clarification, steering, delegation, and handoff | "
+            "platform reference first, then question policy and host-compatible shared orchestration sections | "
+            "scope and host-capability review |\n\n"
+        )
+        old_wait = (
+            "For long-running commands, follow the installed `engineering-workflow` completion-driven waiter "
+            "and bounded-output contract. Keep full logs and required terminal results in private task-owned "
+            "ignored artifacts, verify them independently of a possibly truncated waiter cell, and do not "
+            "wake the model for periodic empty polls when the environment can wait for completion.\n"
+        )
+        for readme, source, customized in (
+            (True, True, False),
+            (True, False, False),
+            (False, True, False),
+            (False, False, False),
+            (True, False, True),
+        ):
+            with (
+                self.subTest(readme=readme, source=source, customized=customized),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                root = Path(tmp)
+                make_target(root)
+                if not readme:
+                    (root / "README.md").unlink()
+                if source:
+                    (root / "src").mkdir()
+                replacements = {
+                    "entrypoint_hint": "README.md" if readme else ".",
+                    "subsystem_hint": "src/" if source else ".",
+                }
+                expected_agents = migrator._template("AGENTS.md.tmpl", replacements)
+                start = expected_agents.index('<!-- ew:route id="execution-context"')
+                end = expected_agents.index('<!-- ew:route id="planning"')
+                agents = expected_agents[:start] + old_route + expected_agents[end:]
+                expected_principles = migrator._template("project_principles.md.tmpl", {})
+                start = expected_principles.index("For long-running commands,")
+                end = expected_principles.index("\n## Owned References", start)
+                principles = expected_principles[:start] + old_wait + expected_principles[end:]
+                owner_path = common.CANONICAL_FILES["principles"]
+                self.assertTrue(migrator._is_pristine_legacy("AGENTS.md", agents))
+                self.assertTrue(migrator._is_pristine_legacy(owner_path, principles))
+                if customized:
+                    agents += "\nProject-owned routing annotation.\n"
+                    principles += "\nProject-owned policy annotation.\n"
+                (root / "AGENTS.md").write_text(agents, encoding="utf-8")
+                owner = root / owner_path
+                owner.write_text(principles, encoding="utf-8")
+                before = snapshot(root)
+                report = migrator.build_migration_report(root, "0.9.5")
+                self.assertTrue(report["success"], report)
+                self.assertEqual(snapshot(root), before)
+                updates = {item["path"] for item in report["proposed_changes"] if item["action"] == "update"}
+                self.assertEqual("AGENTS.md" in updates, not customized)
+                self.assertEqual(owner_path in updates, not customized)
+                result = migrator.execute_prompt_upgrade(root, "0.9.5")
+                self.assertTrue(result["success"], result)
+                self.assertEqual((root / "AGENTS.md").read_text(), agents if customized else expected_agents)
+                self.assertEqual(owner.read_text(), principles if customized else expected_principles)
+                after = snapshot(root)
+                repeated = migrator.execute_prompt_upgrade(root, "0.9.5")
+                self.assertEqual(repeated["update_status"], "already_current")
+                self.assertEqual(snapshot(root), after)
 
     def test_structural_toml_merge_preserves_unknown_keys_and_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:
