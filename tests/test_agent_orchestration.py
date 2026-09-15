@@ -60,6 +60,9 @@ class AgentOrchestrationTests(unittest.TestCase):
     def test_root_owns_shared_state_and_final_synthesis(self):
         text = REFERENCE.read_text(encoding="utf-8")
         self.assertIn("final synthesis", text)
+        self.assertIn("task's working representation", text)
+        self.assertIn("cost of preparing sufficient context", text)
+        self.assertIn("Worker completion is not final acceptance", text)
         self.assertIn("Only the root agent writes", text)
         self.assertIn("`PLANS.md`", text)
         self.assertIn("workflow state manifest", text)
@@ -84,6 +87,8 @@ class AgentOrchestrationTests(unittest.TestCase):
             "stopping condition",
             "escalation condition",
             "retry budget",
+            "accepted decisions",
+            "accessible artifact paths",
         ):
             self.assertIn(field, text)
 
@@ -94,6 +99,14 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("same root with current context is a continuity event", text)
         self.assertIn("not a recovery or ownership handoff", text)
         self.assertIn("Do not delegate duplicate reading", text)
+        self.assertIn("not as a requirement for a particular fork, session, or provider API", text)
+        self.assertIn("reports the concrete blocker", text)
+
+    def test_tool_heavy_stages_use_existing_bounded_routes_and_compact_results(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        for route in ("command pipelines", "scripts", "repository validation helpers", "Programmatic Tool Calling"):
+            self.assertIn(route, text)
+        self.assertIn("return one compact result to the root", text)
 
     def test_optional_profiles_use_expected_safety_defaults(self):
         utility = tomllib.loads((AGENTS / "utility.toml.tmpl").read_text(encoding="utf-8"))
@@ -108,6 +121,10 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(reviewer["model"], "gpt-" + "6-astra")
         self.assertEqual(reviewer["model_reasoning_effort"], "high")
         self.assertEqual(reviewer["sandbox_mode"], "read-only")
+        for profile in (utility, explorer, reviewer):
+            instructions = profile["developer_instructions"]
+            self.assertIn("self-contained", instructions)
+            self.assertIn("blocker", instructions)
 
     def test_utility_template_has_no_expensive_reasoning_or_api_pro_fields(self):
         text = (AGENTS / "utility.toml.tmpl").read_text(encoding="utf-8")

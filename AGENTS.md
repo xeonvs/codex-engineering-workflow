@@ -22,7 +22,7 @@ Reference paths beginning with `references/` below resolve under `skill/engineer
 | --- | --- | --- |
 | Host or capability uncertainty | `references/platform_compatibility.md` | Resolve only the uncertain host behavior; reuse established session facts |
 | Material clarification or additional authorization | `references/question_matrix.md` | Check existing authorization and available evidence before asking |
-| Delegation, context recovery, or execution handoff | Relevant shared sections of `references/agent_orchestration.md` | Scope, ownership, and completion evidence |
+| Delegation, context recovery, execution handoff, or large transient evidence | Relevant shared sections of `references/agent_orchestration.md`, plus `references/planning_and_backlog.md` for durable state | Self-contained scope, accessible evidence, durable knowledge, ownership, and root acceptance |
 | Runtime routing or public skill behavior | `skill/engineering-workflow/SKILL.md` and the directly linked canonical reference | Structural validator and affected behavioral tests |
 | Plan, backlog, closure, archive, or index behavior | `references/planning_and_backlog.md`, plan/index templates, lifecycle scripts and tests | Plan lifecycle tests plus target validation |
 | AGENTS, principles, pitfalls, provider/UI/operations ownership | `references/instruction_lifecycle.md`, related templates, instruction validator and tests | Instruction graph check plus migration tests |

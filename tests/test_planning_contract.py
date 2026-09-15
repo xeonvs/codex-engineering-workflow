@@ -84,11 +84,25 @@ class PlanningContractTests(unittest.TestCase):
         self.assertIn("ordinary milestone or subagent return", text)
         self.assertIn("does not require rereading the entire plan", text)
         self.assertIn("actual context compaction that lost material task context", text)
+        self.assertIn("inspect current repository state", text)
+        self.assertIn("relevant durable artifacts", text)
+        self.assertIn("do not reconstruct the complete chat or execution trajectory", text)
         self.assertIn("interruption with uncertain outcome", text)
         self.assertIn("handoff to another root", text)
         self.assertIn("never repeat a side-effecting action blindly", text)
         for status in ("active", "ready_for_closure", "done", "in_progress", "blocked", "out_of_scope"):
             self.assertIn(f"`{status}`", text)
+
+    def test_transient_evidence_and_durable_knowledge_have_distinct_owners(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        self.assertIn("## Evidence And Durable Knowledge", text)
+        self.assertIn("raw command output", text)
+        self.assertIn("large test logs as transient evidence", text)
+        self.assertIn("user constraints", text)
+        self.assertIn("ordered remaining work as durable knowledge", text)
+        self.assertIn("Do not create a repository artifact merely to retain every transient observation", text)
+        self.assertIn("Bound output before it enters root context", text)
+        self.assertIn("instead of replaying the whole output", text)
 
     def test_current_state_updates_are_event_driven_not_periodic(self):
         reference = REFERENCE.read_text(encoding="utf-8")
