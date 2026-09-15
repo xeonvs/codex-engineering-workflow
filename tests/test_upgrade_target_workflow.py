@@ -147,14 +147,14 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             with self.subTest(mode=mode, include_config=include_config), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 make_target(root)
-                first = migrator.apply_migration(root, "0.9.5", include_agent_config=include_config)
+                first = migrator.apply_migration(root, "0.9.6", include_agent_config=include_config)
                 self.assertTrue(first["success"], first)
                 before = snapshot(root)
 
                 if mode == "apply":
-                    current = migrator.apply_migration(root, "0.9.5", include_agent_config=include_config)
+                    current = migrator.apply_migration(root, "0.9.6", include_agent_config=include_config)
                 else:
-                    current = migrator.execute_prompt_upgrade(root, "0.9.5", include_agent_config=include_config)
+                    current = migrator.execute_prompt_upgrade(root, "0.9.6", include_agent_config=include_config)
 
                 self.assertTrue(current["success"], current)
                 self.assertEqual(current["update_status"], "already_current")
@@ -164,7 +164,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
                 if mode == "prompt" and not include_config:
                     backlog = root / common.CANONICAL_FILES["backlog"]
                     backlog.unlink()
-                    repaired = migrator.execute_prompt_upgrade(root, "0.9.5")
+                    repaired = migrator.execute_prompt_upgrade(root, "0.9.6")
                     self.assertTrue(repaired["success"], repaired)
                     self.assertEqual(repaired["update_status"], "updated")
                     self.assertTrue(backlog.is_file())
@@ -836,7 +836,7 @@ Status: active
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
 
-            result = migrator.execute_prompt_upgrade(root, "0.9.5")
+            result = migrator.execute_prompt_upgrade(root, "0.9.6")
 
             self.assertTrue(result["success"], result)
             self.assertFalse(result["include_agent_config"])
@@ -854,7 +854,7 @@ Status: active
             original = 'name = "local-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n'
             reviewer.write_text(original, encoding="utf-8")
 
-            result = migrator.apply_migration(root, "0.9.5", include_agent_config=True)
+            result = migrator.apply_migration(root, "0.9.6", include_agent_config=True)
 
             self.assertTrue(result["success"], result)
             self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
@@ -870,7 +870,7 @@ Status: active
                 config.write_bytes(original)
                 before = snapshot(root)
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.5", include_agent_config=include_config)
+                result = migrator.execute_prompt_upgrade(root, "0.9.6", include_agent_config=include_config)
 
                 self.assertEqual(config.read_bytes(), original)
                 if include_config:
@@ -890,9 +890,9 @@ Status: active
             config.parent.mkdir()
             config.symlink_to("../native-settings.toml")
 
-            report = migrator.build_migration_report(root, "0.9.5", include_agent_config=True)
+            report = migrator.build_migration_report(root, "0.9.6", include_agent_config=True)
             self.assertTrue(report["required_user_questions"])
-            result = migrator.execute_prompt_upgrade(root, "0.9.5")
+            result = migrator.execute_prompt_upgrade(root, "0.9.6")
 
             self.assertTrue(result["success"], result)
             self.assertTrue(config.is_symlink())
@@ -914,7 +914,7 @@ Status: active
                 owner = root / common.CANONICAL_FILES["principles"]
                 owner.write_text(principles, encoding="utf-8")
 
-                result = migrator.execute_prompt_upgrade(root, "0.9.5")
+                result = migrator.execute_prompt_upgrade(root, "0.9.6")
 
                 self.assertTrue(result["success"], result)
                 if customized:
@@ -936,7 +936,10 @@ Status: active
                     )
                     self.assertEqual(
                         routes["task-handoff"]["owners"],
-                        ["skill://engineering-workflow/references/agent_orchestration.md"],
+                        [
+                            "skill://engineering-workflow/references/agent_orchestration.md",
+                            "skill://engineering-workflow/references/planning_and_backlog.md",
+                        ],
                     )
                     self.assertEqual(graph["contract_version"], 3)
 
@@ -985,7 +988,25 @@ Status: active
                 start = expected_agents.index('<!-- ew:route id="execution-context"')
                 end = expected_agents.index('<!-- ew:route id="planning"')
                 agents = expected_agents[:start] + old_route + expected_agents[end:]
-                expected_principles = migrator._template("project_principles.md.tmpl", {})
+                current_principles = migrator._template("project_principles.md.tmpl", {})
+                expected_principles = current_principles
+                context_start = expected_principles.index(
+                    "Preserve correctness, safety, explicit requirements, and required evidence"
+                )
+                context_end = expected_principles.index(
+                    '\n\n<!-- ew:invariant id="workflow.evidence-driven-completion" -->',
+                    context_start,
+                )
+                old_execution = (
+                    "Preserve correctness, safety, explicit requirements, and required evidence before optimizing "
+                    "calls or output. Use bounded reconnaissance and focused inspection, but fully ingest sources "
+                    "needed for exact edits; prefer repository-native automation and avoid unrelated work. Maintain "
+                    "affected durable state as facts change before dependent actions or handoff, reuse still-current "
+                    "task context, and do not create a periodic model loop that rewrites or rechecks unchanged state."
+                )
+                expected_principles = (
+                    expected_principles[:context_start] + old_execution + expected_principles[context_end:]
+                )
                 start = expected_principles.index("For long-running commands,")
                 end = expected_principles.index("\n## Owned References", start)
                 principles = expected_principles[:start] + old_wait + expected_principles[end:]
@@ -999,20 +1020,103 @@ Status: active
                 owner = root / owner_path
                 owner.write_text(principles, encoding="utf-8")
                 before = snapshot(root)
-                report = migrator.build_migration_report(root, "0.9.5")
+                report = migrator.build_migration_report(root, "0.9.6")
                 self.assertTrue(report["success"], report)
                 self.assertEqual(snapshot(root), before)
                 updates = {item["path"] for item in report["proposed_changes"] if item["action"] == "update"}
                 self.assertEqual("AGENTS.md" in updates, not customized)
                 self.assertEqual(owner_path in updates, not customized)
-                result = migrator.execute_prompt_upgrade(root, "0.9.5")
+                result = migrator.execute_prompt_upgrade(root, "0.9.6")
                 self.assertTrue(result["success"], result)
                 self.assertEqual((root / "AGENTS.md").read_text(), agents if customized else expected_agents)
-                self.assertEqual(owner.read_text(), principles if customized else expected_principles)
+                self.assertEqual(owner.read_text(), principles if customized else current_principles)
                 after = snapshot(root)
-                repeated = migrator.execute_prompt_upgrade(root, "0.9.5")
+                repeated = migrator.execute_prompt_upgrade(root, "0.9.6")
                 self.assertEqual(repeated["update_status"], "already_current")
                 self.assertEqual(snapshot(root), after)
+
+    def test_pristine_095_context_templates_upgrade_but_customized_owners_remain_protected(self):
+        new_route = (
+            '<!-- ew:route id="task-handoff" triggers="delegation|context recovery|execution handoff|'
+            'large transient evidence" owners="skill://engineering-workflow/references/agent_orchestration.md|'
+            'skill://engineering-workflow/references/planning_and_backlog.md" '
+            'guards="manual_review:verify self-contained scope accessible evidence durable state and root acceptance" -->\n'
+            "| `task-handoff` | delegation, context recovery, execution handoff, or large transient evidence | "
+            "installed orchestration and planning references | self-contained scope, durable state, accessible evidence, "
+            "and root acceptance |\n"
+        )
+        old_route = (
+            '<!-- ew:route id="task-handoff" triggers="delegation|context recovery|execution handoff" '
+            'owners="skill://engineering-workflow/references/agent_orchestration.md" '
+            'guards="manual_review:verify scoped ownership and completion evidence" -->\n'
+            "| `task-handoff` | delegation, context recovery, or execution handoff | "
+            "relevant shared orchestration sections | scope, ownership, and completion evidence |\n"
+        )
+        new_principles = (
+            "Preserve correctness, safety, explicit requirements, and required evidence before optimizing calls or "
+            "output. Use bounded reconnaissance and focused inspection, but fully ingest sources needed for exact "
+            "edits; prefer repository-native automation and avoid unrelated work. The root owns intent, plan, "
+            "integration, final verification, and a current working representation of the task. Keep tightly coupled "
+            "work with the root; give independent workers a bounded self-contained packet and require a compact result "
+            "with findings, checks, blockers, and accessible artifact paths.\n\n"
+            "Treat raw command output, searches, temporary diagnostics, and large logs as transient evidence that may "
+            "stay outside root context. Preserve user constraints, accepted decisions, invariants, important verified "
+            "facts, implementation state, blockers, and ordered remaining work as durable knowledge in `PLANS.md` or "
+            "the appropriate repository owner before dependent work. Recover after context loss from the current plan, "
+            "repository state, and relevant durable artifacts rather than reconstructing the full execution transcript. "
+            "Do not create periodic state-maintenance loops or artifacts for observations that have no continuing value."
+        )
+        old_principles = (
+            "Preserve correctness, safety, explicit requirements, and required evidence before optimizing calls or "
+            "output. Use bounded reconnaissance and focused inspection, but fully ingest sources needed for exact "
+            "edits; prefer repository-native automation and avoid unrelated work. Maintain affected durable state as "
+            "facts change before dependent actions or handoff, reuse still-current task context, and do not create a "
+            "periodic model loop that rewrites or rechecks unchanged state."
+        )
+        for readme, source, customized in (
+            (True, True, False),
+            (True, False, False),
+            (False, True, False),
+            (False, False, False),
+            (True, False, True),
+        ):
+            with (
+                self.subTest(readme=readme, source=source, customized=customized),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                root = Path(tmp)
+                make_target(root)
+                if not readme:
+                    (root / "README.md").unlink()
+                if source:
+                    (root / "src").mkdir()
+                agents = migrator._template(
+                    "AGENTS.md.tmpl",
+                    {
+                        "entrypoint_hint": "README.md" if readme else ".",
+                        "subsystem_hint": "src/" if source else ".",
+                    },
+                ).replace(new_route, old_route)
+                principles = migrator._template("project_principles.md.tmpl", {}).replace(
+                    new_principles,
+                    old_principles,
+                )
+                self.assertTrue(migrator._is_pristine_legacy("AGENTS.md", agents))
+                self.assertTrue(migrator._is_pristine_legacy(common.CANONICAL_FILES["principles"], principles))
+                if customized:
+                    agents += "\nProject-owned routing annotation.\n"
+                    principles += "\nProject-owned policy annotation.\n"
+                (root / "AGENTS.md").write_text(agents, encoding="utf-8")
+                owner = root / common.CANONICAL_FILES["principles"]
+                owner.write_text(principles, encoding="utf-8")
+                result = migrator.execute_prompt_upgrade(root, "0.9.6")
+                self.assertTrue(result["success"], result)
+                if customized:
+                    self.assertEqual((root / "AGENTS.md").read_text(encoding="utf-8"), agents)
+                    self.assertEqual(owner.read_text(encoding="utf-8"), principles)
+                else:
+                    self.assertIn("large transient evidence", (root / "AGENTS.md").read_text(encoding="utf-8"))
+                    self.assertIn("durable knowledge", owner.read_text(encoding="utf-8"))
 
     def test_structural_toml_merge_preserves_unknown_keys_and_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:
