@@ -16,4 +16,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-09-12-engineering-workflow-0-9-4-plugin-brand-icon.md](2026-09-12-engineering-workflow-0-9-4-plugin-brand-icon.md)
 - [2026-09-13-astra-workflow-instruction-efficiency.md](2026-09-13-astra-workflow-instruction-efficiency.md)
 - [2026-09-15-context-discipline-and-bounded-delegation-0-9-6.md](2026-09-15-context-discipline-and-bounded-delegation-0-9-6.md)
+- [2026-09-20-bounded-git-aware-repository-audit-0-9-7.md](2026-09-20-bounded-git-aware-repository-audit-0-9-7.md)
 <!-- engineering-workflow:index:end -->
