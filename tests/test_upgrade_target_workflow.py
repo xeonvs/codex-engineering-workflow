@@ -7,6 +7,7 @@ import stat
 import tempfile
 import tomllib
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest import mock
 
@@ -44,7 +45,27 @@ def synthetic_review_lines() -> list[str]:
     ]
 
 
+def synthetic_full_review_lines() -> list[str]:
+    return [
+        *synthetic_review_lines(),
+        "/" + "Users" + "/developer/project/result.png",
+        "/" + "home" + "/service/app",
+        "C:" + "\\Users\\developer\\project",
+        "file:" + "//" + "/tmp/bundle.js",
+        "~/.ssh/" + "id_ed25519",
+        "BEGIN " + "OPENSSH PRIVATE KEY",
+        "ghp" + "_" + "A" * 20,
+        "git" + "@" + "example.test:repo",
+        "https://" + "sample:fake" + "@" + "example.test/repo",
+    ]
+
+
 class UpgradeTargetWorkflowTests(unittest.TestCase):
+    def test_review_token_supports_surrogate_decoded_paths(self):
+        fingerprints = Counter({("file_url", "fixtures/odd-\udcff.txt", 1, "a" * 64): 1})
+        review = migrator._privacy_review_token(fingerprints, "0.9.8", "0.9.9")
+        self.assertRegex(review, r"^privacy-review-v2:[0-9a-f]{64}$")
+
     def test_plan_mode_is_fully_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -200,7 +221,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
 
             self.assertFalse(result["success"])
             self.assertEqual(result["update_status"], "privacy_review_required")
-            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["agent_action"], "request_privacy_review_approval")
             self.assertEqual(result["mutation_log"], [])
             self.assertFalse((root / "PLANS.md").exists())
             self.assertEqual(readme.read_text(encoding="utf-8"), original)
@@ -218,10 +239,16 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertEqual(result["agent_action"], "request_privacy_review_approval")
             self.assertEqual(result["privacy_review"]["status"], "approval_required")
-            self.assertRegex(result["privacy_review"]["review_token"], r"^privacy-review-v1:[0-9a-f]{64}$")
+            self.assertRegex(result["privacy_review"]["review_token"], r"^privacy-review-v2:[0-9a-f]{64}$")
             self.assertEqual(
                 {item["type"] for item in result["privacy_review"]["candidates"]},
-                set(common.PRIVACY_REVIEW_ELIGIBLE_TYPES),
+                {
+                    "credential_like_assignment",
+                    "environment_secret_assignment",
+                    "email",
+                    "internal_hostname",
+                    "bearer_token",
+                },
             )
             self.assertTrue(
                 all(set(item) == {"type", "path", "line"} for item in result["privacy_review"]["candidates"])
@@ -346,30 +373,84 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             self.assertTrue(result["success"], result)
             self.assertEqual(result["privacy_review"]["status"], "not_required")
 
-    def test_hard_privacy_category_cannot_be_approved(self):
+    def test_mixed_privacy_categories_need_fresh_v2_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
             fixture = root / "fixtures.md"
-            fixture.write_text("\n".join(synthetic_review_lines()) + "\n", encoding="utf-8")
-            eligible_review = migrator.build_migration_report(root, "0.8.2")["privacy_review"]["review_token"]
-            fixture.write_text(
-                fixture.read_text(encoding="utf-8") + "/" + "Users" + "/sample/private\n",
-                encoding="utf-8",
-            )
+            values = synthetic_full_review_lines()
+            fixture.write_text("\n".join(values) + "\n", encoding="utf-8")
             before = snapshot(root)
 
-            result = migrator.execute_prompt_upgrade(
-                root,
-                "0.8.2",
-                approved_privacy_review=eligible_review,
-            )
+            result = migrator.execute_prompt_upgrade(root, "0.8.2")
 
             self.assertFalse(result["success"])
-            self.assertEqual(result["privacy_review"]["status"], "hard_block")
-            self.assertIsNone(result["privacy_review"]["review_token"])
-            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["privacy_review"]["status"], "approval_required")
+            self.assertRegex(result["privacy_review"]["review_token"], r"^privacy-review-v2:[0-9a-f]{64}$")
+            self.assertEqual(
+                {item["type"] for item in result["privacy_review"]["candidates"]}, set(common.PRIVACY_PATTERNS)
+            )
+            self.assertEqual(result["agent_action"], "request_privacy_review_approval")
             self.assertEqual(result["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+            serialized = json.dumps(result, sort_keys=True)
+            self.assertNotIn("line_sha256", serialized)
+            for value in values:
+                self.assertNotIn(value, serialized)
+
+            old = migrator.apply_migration(root, "0.8.2", approved_privacy_review="privacy-review-v1:" + "0" * 64)
+            self.assertEqual(old["privacy_review"]["status"], "token_mismatch")
+            self.assertEqual(old["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+
+            approved = migrator.apply_migration(
+                root, "0.8.2", approved_privacy_review=result["privacy_review"]["review_token"]
+            )
+            self.assertTrue(approved["success"], approved)
+            self.assertEqual(approved["privacy_review"]["status"], "approved")
+            self.assertEqual(fixture.read_text(encoding="utf-8"), "\n".join(values) + "\n")
+            self.assertEqual({item["type"] for item in common.scan_public_tree(root)}, set(common.PRIVACY_PATTERNS))
+
+    def test_scanner_regex_self_match_is_reviewable_and_snapshot_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            scanner = root / "tests" / "test_privacy_scanner.py"
+            scanner.parent.mkdir()
+            scanner.write_text('FILE_URL_RE = re.compile(r"file:' + "//" + '")\n', encoding="utf-8")
+            report = migrator.build_migration_report(root, "0.8.2")
+            self.assertEqual(report["privacy_review"]["status"], "approval_required")
+            self.assertIn(
+                {"type": "file_url", "path": "tests/test_privacy_scanner.py", "line": 1},
+                report["privacy_review"]["candidates"],
+            )
+            scanner.write_text("# moved\n" + scanner.read_text(encoding="utf-8"), encoding="utf-8")
+            before = snapshot(root)
+
+            stale = migrator.apply_migration(
+                root, "0.8.2", approved_privacy_review=report["privacy_review"]["review_token"]
+            )
+            self.assertEqual(stale["privacy_review"]["status"], "token_mismatch")
+            self.assertEqual(stale["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+
+    def test_duplicate_formerly_hard_finding_invalidates_token_without_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            fixture = root / "fixtures.md"
+            line = "file:" + "//" + "/tmp/sample.txt\n"
+            fixture.write_text(line, encoding="utf-8")
+            report = migrator.build_migration_report(root, "0.8.2")
+            self.assertEqual(report["privacy_review"]["contract_version"], 2)
+            fixture.write_text(line + line, encoding="utf-8")
+            before = snapshot(root)
+
+            stale = migrator.apply_migration(
+                root, "0.8.2", approved_privacy_review=report["privacy_review"]["review_token"]
+            )
+            self.assertEqual(stale["privacy_review"]["status"], "token_mismatch")
+            self.assertEqual(stale["mutation_log"], [])
             self.assertEqual(snapshot(root), before)
 
     def test_finding_introduced_during_approved_apply_triggers_rollback(self):
@@ -382,7 +463,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             original_final_scan = migrator._new_privacy_findings
 
             def introduce_before_final_scan(scan_root, approved):
-                (root / "late-note.md").write_text("late" + "@" + "example.test\n", encoding="utf-8")
+                (root / "late-note.md").write_text("file:" + "//" + "/tmp/new.txt\n", encoding="utf-8")
                 return original_final_scan(scan_root, approved)
 
             with mock.patch.object(migrator, "_new_privacy_findings", side_effect=introduce_before_final_scan):
@@ -435,7 +516,7 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
 
             self.assertFalse(result["success"])
             self.assertEqual(result["update_status"], "privacy_review_required")
-            self.assertEqual(result["agent_action"], "report_privacy_findings")
+            self.assertEqual(result["agent_action"], "request_privacy_review_approval")
             self.assertEqual(result["mutation_log"], [])
             self.assertFalse((root / "PLANS.md").exists())
 
