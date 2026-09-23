@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.9.7"
+CURRENT_VERSION = "0.9.8"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -237,7 +237,7 @@ class SkillRepoValidationTests(unittest.TestCase):
             errors, _version = validate_skill_repo._validate_skill_router(root)
             self.assertEqual(errors, [])
 
-    def test_profile_drift_and_unsupported_astra_effort_are_rejected(self):
+    def test_profile_drift_and_unsupported_reviewer_effort_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._copy_repo_subset(root)
@@ -245,9 +245,9 @@ class SkillRepoValidationTests(unittest.TestCase):
             reviewer = agents / "reviewer.toml.tmpl"
             original = reviewer.read_text(encoding="utf-8")
             variants = (
-                original.replace("gpt-" + "6-astra", "gpt-" + "5.6"),
-                original.replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "none"'),
-                original.replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "minimal"'),
+                original.replace("gpt-" + "6-sol", "gpt-" + "5.6-terra"),
+                original.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "none"'),
+                original.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "minimal"'),
             )
             for index, variant in enumerate(variants):
                 with self.subTest(variant=index):

@@ -859,6 +859,66 @@ Status: active
             self.assertTrue(result["success"], result)
             self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
 
+    def test_prior_opt_in_refreshes_only_pristine_agent_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            initial = migrator.apply_migration(root, "0.9.7", include_agent_config=True)
+            self.assertTrue(initial["success"], initial)
+            agents = root / ".codex/agents"
+            for name in ("utility", "explorer", "reviewer"):
+                path = agents / f"{name}.toml"
+                prior = path.read_text(encoding="utf-8")
+                if name == "utility":
+                    prior = prior.replace('model = "gpt-6-luna"', 'model = "gpt-5.6-terra"')
+                elif name == "explorer":
+                    prior = prior.replace('model = "gpt-6-sol"', 'model = "gpt-5.6-terra"')
+                else:
+                    prior = prior.replace('model = "gpt-6-sol"', 'model = "gpt-6-astra"')
+                    prior = prior.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "high"')
+                    prior = prior.replace(
+                        "Bounded evidence-first review for ordinary changes",
+                        "Evidence-first review for correctness and high-risk changes",
+                    )
+                self.assertTrue(migrator._is_pristine_prior_agent(name, prior))
+                path.write_text(prior, encoding="utf-8")
+
+            explorer = agents / "explorer.toml"
+            custom = explorer.read_text(encoding="utf-8").replace(
+                'model = "gpt-5.6-terra"', 'model = "custom-supported-model"'
+            )
+            explorer.write_text(custom, encoding="utf-8")
+            report = migrator.build_migration_report(root, "0.9.8")
+            self.assertTrue(report["include_agent_config"])
+            proposed = {
+                change["path"]
+                for change in report["proposed_changes"]
+                if change["reason"] == "known pristine prior agent template fingerprint"
+            }
+            self.assertEqual(proposed, {".codex/agents/utility.toml", ".codex/agents/reviewer.toml"})
+
+            result = migrator.execute_prompt_upgrade(root, "0.9.8")
+            self.assertTrue(result["success"], result)
+            self.assertTrue(result["include_agent_config"])
+            self.assertEqual(explorer.read_text(encoding="utf-8"), custom)
+            for name in ("utility", "reviewer"):
+                expected = (migrator.AGENT_TEMPLATE_ROOT / f"{name}.toml.tmpl").read_text(encoding="utf-8")
+                self.assertEqual((agents / f"{name}.toml").read_text(encoding="utf-8"), expected)
+
+    def test_prior_agent_template_is_not_changed_without_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            utility = root / ".codex/agents/utility.toml"
+            utility.parent.mkdir(parents=True)
+            current = (migrator.AGENT_TEMPLATE_ROOT / "utility.toml.tmpl").read_text(encoding="utf-8")
+            prior = current.replace('model = "gpt-6-luna"', 'model = "gpt-5.6-terra"')
+            utility.write_text(prior, encoding="utf-8")
+            result = migrator.execute_prompt_upgrade(root, "0.9.8")
+            self.assertTrue(result["success"], result)
+            self.assertFalse(result["include_agent_config"])
+            self.assertEqual(utility.read_text(encoding="utf-8"), prior)
+
     def test_invalid_codex_config_blocks_only_requested_configuration_work(self):
         for include_config in (False, True):
             with self.subTest(include_config=include_config), tempfile.TemporaryDirectory() as tmp:
@@ -1137,8 +1197,8 @@ Status: active
             for name in ("utility", "explorer", "reviewer"):
                 self.assertTrue((root / ".codex" / "agents" / f"{name}.toml").exists())
             reviewer = tomllib.loads((root / ".codex/agents/reviewer.toml").read_text(encoding="utf-8"))
-            self.assertEqual(reviewer["model"], "gpt-" + "6-astra")
-            self.assertEqual(reviewer["model_reasoning_effort"], "high")
+            self.assertEqual(reviewer["model"], "gpt-" + "6-sol")
+            self.assertEqual(reviewer["model_reasoning_effort"], "medium")
 
     def test_agents_header_comment_is_preserved_during_merge(self):
         text = "[agents] # keep this comment\nmax_threads = 3\n"
