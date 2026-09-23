@@ -18,4 +18,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-09-15-context-discipline-and-bounded-delegation-0-9-6.md](2026-09-15-context-discipline-and-bounded-delegation-0-9-6.md)
 - [2026-09-20-bounded-git-aware-repository-audit-0-9-7.md](2026-09-20-bounded-git-aware-repository-audit-0-9-7.md)
 - [2026-09-20-publish-repository-audit-fix-0-9-7.md](2026-09-20-publish-repository-audit-fix-0-9-7.md)
+- [2026-09-23-gpt-6-model-profiles-and-marketplace-release.md](2026-09-23-gpt-6-model-profiles-and-marketplace-release.md)
 <!-- engineering-workflow:index:end -->
