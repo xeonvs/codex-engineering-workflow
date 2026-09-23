@@ -18,6 +18,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertIn("Do not use a language-model subagent", text)
         self.assertIn("sleep", text)
         self.assertIn("polling", text)
+        self.assertIn("running a known shell command or test suite", text)
         self.assertIn("Do not implement monitoring as a model sleep loop", text)
 
     def test_completion_wait_is_persistent_and_does_not_wake_model_for_empty_state(self):
@@ -112,14 +113,14 @@ class AgentOrchestrationTests(unittest.TestCase):
         utility = tomllib.loads((AGENTS / "utility.toml.tmpl").read_text(encoding="utf-8"))
         explorer = tomllib.loads((AGENTS / "explorer.toml.tmpl").read_text(encoding="utf-8"))
         reviewer = tomllib.loads((AGENTS / "reviewer.toml.tmpl").read_text(encoding="utf-8"))
-        self.assertEqual(utility["model"], "gpt-" + "5.6-" + "terra")
+        self.assertEqual(utility["model"], "gpt-" + "6-luna")
         self.assertEqual(utility["model_reasoning_effort"], "low")
         self.assertEqual(utility["sandbox_mode"], "read-only")
         self.assertEqual(explorer["sandbox_mode"], "read-only")
-        self.assertEqual(explorer["model"], utility["model"])
+        self.assertEqual(explorer["model"], "gpt-" + "6-sol")
         self.assertEqual(explorer["model_reasoning_effort"], "medium")
-        self.assertEqual(reviewer["model"], "gpt-" + "6-astra")
-        self.assertEqual(reviewer["model_reasoning_effort"], "high")
+        self.assertEqual(reviewer["model"], "gpt-" + "6-sol")
+        self.assertEqual(reviewer["model_reasoning_effort"], "medium")
         self.assertEqual(reviewer["sandbox_mode"], "read-only")
         for profile in (utility, explorer, reviewer):
             instructions = profile["developer_instructions"]
@@ -131,9 +132,10 @@ class AgentOrchestrationTests(unittest.TestCase):
         for value in ('"high"', '"xhigh"', '"max"', '"ultra"', "reasoning.mode"):
             self.assertNotIn(value, text)
 
-    def test_minimal_and_none_are_conditional_only(self):
+    def test_none_is_conditional_and_legacy_minimal_migrates_to_low(self):
         text = PROFILES.read_text(encoding="utf-8")
-        self.assertIn("allow `minimal` or `none` only when", text)
+        self.assertIn("allow `none` only when", text)
+        self.assertIn("older profile used `minimal`", text)
         self.assertIn("regression tests or evaluation preserve quality", text)
 
     def test_concrete_model_slugs_have_one_reference_owner(self):
