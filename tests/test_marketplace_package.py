@@ -30,7 +30,7 @@ class MarketplacePackageTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(result["success"], result)
-        self.assertEqual(result["version"], "0.9.9")
+        self.assertEqual(result["version"], "0.9.10")
         self.assertEqual(result["drift"], [])
 
     def test_check_detects_packaged_skill_byte_drift(self):
@@ -111,7 +111,7 @@ class MarketplacePackageTests(unittest.TestCase):
             (REPO_ROOT / "plugins/engineering-workflow/.claude-plugin/plugin.json").read_text(encoding="utf-8")
         )
         for manifest in (codex, claude):
-            self.assertEqual(manifest["version"], "0.9.9")
+            self.assertEqual(manifest["version"], "0.9.10")
             self.assertEqual(manifest["repository"], builder.REPOSITORY_URL)
             self.assertNotIn("mcpServers", manifest)
             self.assertNotIn("apps", manifest)

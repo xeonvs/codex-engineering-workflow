@@ -162,6 +162,26 @@ class PlanLifecycleTests(unittest.TestCase):
                     self.assertTrue((root / result["archive_path"]).is_file())
                 self.assertTrue(lifecycle.check_plan_lifecycle(root)["success"])
 
+    def test_closure_preserves_wrapped_recent_archive_pointer(self):
+        previous = (
+            "- [x] 2026-01-01: Completed earlier synthetic\n"
+            "  task; [full archived plan](docs/archive/plans/earlier-synthetic.md)."
+        )
+        for disposition in ("compact", "archive"):
+            with self.subTest(disposition=disposition), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                text = ready_plan().replace(
+                    "## Recently Completed\n\n", "## Recently Completed\n\n" + previous + "\n", 1
+                )
+                (root / "PLANS.md").write_text(text, encoding="utf-8")
+
+                result = lifecycle.close_plan(root, disposition)
+
+                self.assertTrue(result["success"], result)
+                closed = (root / "PLANS.md").read_text(encoding="utf-8")
+                self.assertIn(previous, closed)
+                self.assertTrue(lifecycle.check_plan_lifecycle(root)["success"])
+
     def test_atomic_failure_restores_original_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

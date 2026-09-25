@@ -15,6 +15,7 @@ from test_support import load_script_module
 
 common = load_script_module("common")
 migrator = load_script_module("upgrade_target_workflow")
+lifecycle = load_script_module("plan_lifecycle")
 LEGACY_INSTRUCTIONS = Path(__file__).resolve().parent / "fixtures/legacy_instructions"
 
 
@@ -33,6 +34,51 @@ def make_target(root: Path) -> None:
 
 def snapshot(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+def make_custom_archive_target(root: Path, *, unmanaged_leaf: bool = False) -> None:
+    make_target(root)
+    archive = root / "docs/product/plans/archive"
+    archive.mkdir(parents=True)
+    (archive / "previous.md").write_text("# Previously retained plan\n", encoding="utf-8")
+    indexes = (
+        "docs/product/plans/archive/README.md",
+        "docs/product/PLANS_ARCHIVE.md",
+        "docs/README.md",
+    )
+    (root / indexes[0]).write_text(
+        "# Product Plan Archive\n\nOwner note before index.\n\n"
+        + (
+            "Repository-owned index without managed markers.\n"
+            if unmanaged_leaf
+            else f"{lifecycle.INDEX_START}\n- [previous.md](previous.md)\n{lifecycle.INDEX_END}\n"
+        )
+        + "\nOwner note after index.\n",
+        encoding="utf-8",
+    )
+    (root / indexes[1]).write_text(
+        f"# Product Plans\n\n{lifecycle.INDEX_START}\n- [Archive](plans/archive/README.md)\n{lifecycle.INDEX_END}\n",
+        encoding="utf-8",
+    )
+    (root / indexes[2]).write_text(
+        "# Documentation\n\nOwner note before index.\n\n"
+        f"{lifecycle.INDEX_START}\n"
+        "- [Product plans](product/PLANS_ARCHIVE.md)\n"
+        f"{lifecycle.INDEX_END}\n"
+        "\nOwner note after index.\n",
+        encoding="utf-8",
+    )
+    state = root / common.STATE_MANIFEST_PATH
+    state.write_text(
+        "schema_version: 2\n"
+        'skill_version: "0.9.9"\n'
+        "managed_paths:\n"
+        f"  - {common.STATE_MANIFEST_PATH}\n"
+        + "".join(f"  - {path}\n" for path in indexes)
+        + "plan_archive_path: docs/product/plans/archive\n"
+        "plan_archive_indexes:\n" + "".join(f"  - {path}\n" for path in indexes) + "active_plan: null\n",
+        encoding="utf-8",
+    )
 
 
 def synthetic_review_lines() -> list[str]:
@@ -1369,6 +1415,48 @@ Status: active
         self.assertIn('  - "docs/README.md"', rendered)
         self.assertIn('active_plan: "PLANS.md"', rendered)
         self.assertNotIn('plan_archive_path: "docs/archive/plans"', rendered)
+
+    def test_upgrade_preserves_three_level_custom_archive_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_custom_archive_target(root)
+
+            result = migrator.apply_migration(root, "0.9.10")
+
+            self.assertTrue(result["success"], result)
+            self.assertFalse((root / "docs/archive").exists())
+            leaf = (root / "docs/product/plans/archive/README.md").read_text(encoding="utf-8")
+            middle = (root / "docs/product/PLANS_ARCHIVE.md").read_text(encoding="utf-8")
+            docs = (root / "docs/README.md").read_text(encoding="utf-8")
+            self.assertIn("Owner note before index.", leaf)
+            self.assertIn("Owner note after index.", leaf)
+            self.assertIn("Owner note before index.", docs)
+            self.assertIn("Owner note after index.", docs)
+            self.assertEqual(leaf.count("(previous.md)"), 1)
+            self.assertEqual(middle.count("(plans/archive/README.md)"), 1)
+            self.assertEqual(docs.count("(product/PLANS_ARCHIVE.md)"), 1)
+            self.assertTrue(lifecycle.check_plan_lifecycle(root)["success"])
+
+            before = snapshot(root)
+            repeat = migrator.apply_migration(root, "0.9.10")
+            self.assertEqual(repeat["update_status"], "already_current", repeat)
+            self.assertEqual(snapshot(root), before)
+
+    def test_unmanaged_custom_archive_index_rolls_back_partial_upgrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_custom_archive_target(root, unmanaged_leaf=True)
+            before = snapshot(root)
+
+            result = migrator.apply_migration(root, "0.9.10")
+
+            self.assertFalse(result["success"], result)
+            self.assertEqual(result["update_status"], "rolled_back")
+            self.assertEqual(result["errors"][0]["code"], "unmanaged_index_conflict")
+            after = snapshot(root)
+            self.assertEqual({path: data for path, data in after.items() if path != "PLANS.md"}, before)
+            self.assertIn("Apply failed", (root / "PLANS.md").read_text(encoding="utf-8"))
+            self.assertFalse((root / "docs/archive").exists())
 
     def test_manifest_rejects_partial_custom_archive_contract(self):
         existing = "plan_archive_path: docs/product/plans/archive\nactive_plan: null\n"

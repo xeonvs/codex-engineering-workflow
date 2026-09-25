@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.9.9"
+CURRENT_VERSION = "0.9.10"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -255,6 +255,22 @@ class SkillRepoValidationTests(unittest.TestCase):
                     self.assertTrue(validate_skill_repo._validate_agent_profiles(root))
             reviewer.write_text(original, encoding="utf-8")
             self.assertEqual(validate_skill_repo._validate_agent_profiles(root), [])
+
+    def test_claude_profiles_keep_native_role_model_and_read_only_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            agents = root / "skill/engineering-workflow/assets/claude_agents"
+            utility = agents / "workflow-utility.md.tmpl"
+            original = utility.read_text(encoding="utf-8")
+            self.assertEqual(validate_skill_repo._validate_claude_agent_profiles(root), [])
+            for changed in (
+                original.replace("model: haiku", "model: opus"),
+                original.replace("tools: Read, Grep, Glob", "tools: Read, Edit"),
+                original.replace("model: haiku", "model: haiku\neffort: high"),
+            ):
+                utility.write_text(changed, encoding="utf-8")
+                self.assertTrue(validate_skill_repo._validate_claude_agent_profiles(root))
 
     def test_invented_pro_slug_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
