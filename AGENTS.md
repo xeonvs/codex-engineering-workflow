@@ -14,6 +14,8 @@ This file is local guidance for agents developing this repository. It is not par
 - `PLANS.md` — durable execution state for work on this repository.
 - `docs/archive/` — future-useful closed plans and their navigation indexes.
 
+At a new session or material context recovery, obtain one compact documentation map through `skill/engineering-workflow/scripts/documentation_navigation.py map --repo-root . --root docs --root skill/engineering-workflow/references`. Reuse a current equivalent map; expand only relevant branches. Installation update policy and target recommendations follow `references/skill_update.md`.
+
 ## Task Routing
 
 Reference paths beginning with `references/` below resolve under `skill/engineering-workflow/` in this repository.
@@ -26,6 +28,7 @@ Reference paths beginning with `references/` below resolve under `skill/engineer
 | Runtime routing or public skill behavior | `skill/engineering-workflow/SKILL.md` and the directly linked canonical reference | Structural validator and affected behavioral tests |
 | Plan, backlog, closure, archive, or index behavior | `references/planning_and_backlog.md`, plan/index templates, lifecycle scripts and tests | Plan lifecycle tests plus target validation |
 | AGENTS, principles, pitfalls, provider/UI/operations ownership | `references/instruction_lifecycle.md`, related templates, instruction validator and tests | Instruction graph check plus migration tests |
+| Documentation discovery, writing, content/path changes, or restructuring | `references/documentation_navigation.md` and any existing local writing owner | Affected content/links/owners, managed indexes, and approved snapshot for restructuring |
 | Installed-skill refresh or update | `references/skill_update.md`, updater and updater tests | Candidate-tree and rollback matrix |
 | Target workflow upgrade | `references/target_workflow_upgrade.md`, audit/common/upgrader code and tests | Report/apply/prompt migration matrix |
 | Validation policy or command-classifier changes | `references/validation_safety.md`, related scripts and tests | Affected safety matrix |

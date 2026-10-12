@@ -36,6 +36,16 @@ def snapshot(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
+def prior_router(current: str) -> str:
+    """Keep historical fingerprint fixtures independent of newly added router sections."""
+    start = current.index("\nAt a new session or material context recovery,")
+    end = current.index("\n## Task Routes", start)
+    current = current[:start] + current[end:]
+    start = current.index('<!-- ew:route id="documentation"')
+    end = current.index('<!-- ew:route id="execution-context"', start)
+    return current[:start] + current[end:]
+
+
 def make_custom_archive_target(root: Path, *, unmanaged_leaf: bool = False) -> None:
     make_target(root)
     archive = root / "docs/product/plans/archive"
@@ -1172,9 +1182,10 @@ Status: active
                     "subsystem_hint": "src/" if source else ".",
                 }
                 expected_agents = migrator._template("AGENTS.md.tmpl", replacements)
-                start = expected_agents.index('<!-- ew:route id="execution-context"')
-                end = expected_agents.index('<!-- ew:route id="planning"')
-                agents = expected_agents[:start] + old_route + expected_agents[end:]
+                prior_agents = prior_router(expected_agents)
+                start = prior_agents.index('<!-- ew:route id="execution-context"')
+                end = prior_agents.index('<!-- ew:route id="planning"')
+                agents = prior_agents[:start] + old_route + prior_agents[end:]
                 current_principles = migrator._template("project_principles.md.tmpl", {})
                 expected_principles = current_principles
                 context_start = expected_principles.index(
@@ -1277,12 +1288,14 @@ Status: active
                     (root / "README.md").unlink()
                 if source:
                     (root / "src").mkdir()
-                agents = migrator._template(
-                    "AGENTS.md.tmpl",
-                    {
-                        "entrypoint_hint": "README.md" if readme else ".",
-                        "subsystem_hint": "src/" if source else ".",
-                    },
+                agents = prior_router(
+                    migrator._template(
+                        "AGENTS.md.tmpl",
+                        {
+                            "entrypoint_hint": "README.md" if readme else ".",
+                            "subsystem_hint": "src/" if source else ".",
+                        },
+                    )
                 ).replace(new_route, old_route)
                 principles = migrator._template("project_principles.md.tmpl", {}).replace(
                     new_principles,
