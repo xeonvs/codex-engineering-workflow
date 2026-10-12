@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.9.10"
+CURRENT_VERSION = "0.10.0"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -51,6 +51,20 @@ class SkillRepoValidationTests(unittest.TestCase):
         text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("not part of the installed", text)
         self.assertFalse((REPO_ROOT / "skill/engineering-workflow/AGENTS.md").exists())
+
+    def test_release_adoption_descriptor_must_match_active_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._copy_repo_subset(root)
+            path = root / "skill/engineering-workflow/assets/release_adoption.json"
+            descriptor = json.loads(path.read_text())
+            descriptor["skill_version"] = "0.11.0"
+            path.write_text(json.dumps(descriptor))
+            result = validate_skill_repo.validate_skill_repo(root)
+            self.assertFalse(result["success"])
+            self.assertIn(
+                "Release adoption descriptor version does not match the active skill version", result["errors"]
+            )
 
     def test_forbidden_cache_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,6 +40,15 @@ def write_candidate(repo: Path, version: str, name: str = "engineering-workflow"
     (skill / "references" / "policy.md").write_text("policy\n", encoding="utf-8")
     (skill / "scripts" / "tool.py").write_text("VALUE = 1\n", encoding="utf-8")
     (skill / "agents" / "openai.yaml").write_text("interface:\n  display_name: Fixture\n", encoding="utf-8")
+    if updater._semver_key(version) >= updater._semver_key("0.10.0"):
+        (skill / "assets").mkdir(parents=True, exist_ok=True)
+        local_descriptor = Path(updater.__file__).resolve().parents[1] / "assets" / "release_adoption.json"
+        descriptor = json.loads(local_descriptor.read_text())
+        descriptor["skill_version"] = version
+        (skill / "assets" / "release_adoption.json").write_text(json.dumps(descriptor))
+        (skill / "references" / "documentation_navigation.md").write_text("Fixture navigation contract\n")
+        for name in ("documentation_navigation", "documentation_restructure", "release_adoption", "workflow_updates"):
+            (skill / "scripts" / f"{name}.py").write_text("# Inert fixture; never executed\n")
     return skill
 
 
@@ -64,7 +74,7 @@ def commit_version(repo: Path, version: str) -> str:
 
 
 class UpdateInstalledSkillTests(unittest.TestCase):
-    def test_plugin_managed_install_returns_marketplace_handoff_without_cache_write(self):
+    def test_plugin_managed_offline_check_reports_unknown_without_cache_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             plugin = root / "cache" / "engineering-workflow"
@@ -77,22 +87,17 @@ class UpdateInstalledSkillTests(unittest.TestCase):
             (plugin / ".claude-plugin" / "plugin.json").write_text("{}\n", encoding="utf-8")
             before = {path.relative_to(plugin): path.read_bytes() for path in plugin.rglob("*") if path.is_file()}
 
-            result = updater.update_installation(
-                install,
-                "https://invalid.example.test/should-not-be-fetched",
-                str(SOURCE_PATH),
-                "main",
-                apply=True,
-            )
+            with mock.patch.object(updater, "_clone_candidate", side_effect=updater.UpdateConflict(
+                "upstream_unavailable", "Upstream could not be checked; currentness is unknown"
+            )):
+                result = updater.update_installation(install)
 
             after = {path.relative_to(plugin): path.read_bytes() for path in plugin.rglob("*") if path.is_file()}
-            self.assertTrue(result["success"], result)
+            self.assertFalse(result["success"], result)
             self.assertEqual(result["installation_type"], "plugin_managed")
-            self.assertEqual(result["update_status"], "marketplace_handoff")
-            self.assertEqual(result["recommended_action"], "marketplace_update")
-            self.assertEqual(result["next_agent_action"], "update_plugin_through_marketplace")
-            self.assertFalse(result["marketplace_handoff"]["direct_cache_replacement_allowed"])
-            self.assertEqual(result["marketplace_handoff"]["platforms"], ["codex", "claude"])
+            self.assertEqual(result["update_status"], "upstream_unavailable")
+            self.assertEqual(result["currentness"], "unknown")
+            self.assertEqual(result["next_agent_action"], "continue_with_installed_skill")
             self.assertIsInstance(result["plugin_root"], str)
             json.dumps(result)
             self.assertEqual(before, after)
@@ -806,6 +811,554 @@ class UpdateInstalledSkillTests(unittest.TestCase):
             backup_dirs = [path for path in backups.iterdir() if path.is_dir()]
             self.assertEqual(len(backup_dirs), 1)
             self.assertEqual(updater.read_skill_identity(backup_dirs[0])["version"], "0.4.1")
+
+
+def init_catalog(
+    root: Path, source: Path, version: str = "0.5.0", catalog_release: str = "1.0.0"
+) -> tuple[Path, Path]:
+    catalog = root / "catalog"
+    catalog.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(catalog)], check=True)
+    git(catalog, "config", "user.name", "Fixture")
+    git(catalog, "config", "user.email", ('fixture' '@example.test'))
+    bundle = catalog / "plugins" / "engineering-workflow"
+    shutil.copytree(source / SOURCE_PATH, bundle / "skills" / "engineering-workflow")
+    for platform in ("codex", "claude"):
+        (bundle / f".{platform}-plugin").mkdir()
+        (bundle / f".{platform}-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "engineering-workflow", "version": version}) + "\n"
+        )
+    provenance = {
+        "schema_version": 1, "catalog_version": "1.0.0", "bundles": [{
+            "name": "engineering-workflow", "version": version,
+            "source_repository": updater.CANONICAL_UPSTREAM, "source_policy": "latest-tag",
+            "source_ref": f"v{version}", "source_commit": git(source, "rev-parse", "HEAD"),
+            "source_path": "plugins/engineering-workflow", "bundle_sha256": updater._bundle_digest(bundle),
+        }],
+    }
+    (catalog / "PROVENANCE.json").write_text(json.dumps(provenance))
+    git(catalog, "add", ".")
+    git(catalog, "commit", "-q", "-m", "catalog release")
+    git(catalog, "tag", "-a", f"v{catalog_release}", "-m", "stable")
+    return catalog, bundle
+
+
+class StableAndNativeUpdateTests(unittest.TestCase):
+    def test_candidate_rejects_python_executable_cache_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = write_candidate(Path(tmp), "0.10.0")
+            cache = candidate / "scripts" / "__pycache__"
+            cache.mkdir()
+            (cache / "tool.cpython-313.pyc").write_bytes(b"untrusted bytecode")
+            with self.assertRaises(updater.UpdateConflict) as refusal:
+                updater.validate_candidate(candidate)
+            self.assertEqual(refusal.exception.code, "invalid_candidate_executable_cache")
+
+    def test_cli_check_does_not_write_sibling_bytecode_when_environment_is_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = init_upstream(root, "0.10.0")
+            install = root / "installed"
+            shutil.copytree(source / SOURCE_PATH, install)
+            runtime = root / "runtime"
+            scripts = runtime / "scripts"
+            assets = runtime / "assets"
+            scripts.mkdir(parents=True)
+            assets.mkdir()
+            source_scripts = Path(updater.__file__).resolve().parent
+            for name in ("update_installed_skill.py", "release_adoption.py", "common.py"):
+                shutil.copy2(source_scripts / name, scripts / name)
+            shutil.copy2(
+                Path(updater.__file__).resolve().parents[1] / "assets" / "release_adoption.json",
+                assets / "release_adoption.json",
+            )
+            environment = os.environ.copy()
+            environment.pop("PYTHONDONTWRITEBYTECODE", None)
+            completed = subprocess.run(
+                [
+                    str(Path(os.environ.get("PYTHON", sys.executable))),
+                    str(scripts / "update_installed_skill.py"),
+                    "--install-path", str(install),
+                    "--source-repo", str(source),
+                    "--source-path", str(SOURCE_PATH),
+                    "--ref", "main", "--check", "--format", "json",
+                ],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+            self.assertFalse(any(path.name == "__pycache__" for path in runtime.rglob("__pycache__")))
+
+    def test_modern_candidate_requires_capability_files_without_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = write_candidate(Path(tmp), "0.10.0")
+            self.assertTrue(updater.validate_candidate(candidate)["success"])
+            (candidate / "scripts" / "documentation_navigation.py").unlink()
+            with self.assertRaises(updater.UpdateConflict) as refusal:
+                updater.validate_candidate(candidate)
+            self.assertEqual(refusal.exception.code, "invalid_candidate")
+
+    def test_candidate_descriptor_preserves_bounded_semantic_summaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = write_candidate(Path(tmp), "0.10.0")
+            descriptor = updater._candidate_descriptor(candidate)
+            self.assertIsNotNone(descriptor)
+            self.assertTrue(all(change.get("summary") for change in descriptor["changes"]))
+
+    def test_modern_candidate_rejects_malformed_or_mismatched_descriptor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = write_candidate(Path(tmp), "0.10.0")
+            descriptor = candidate / "assets" / "release_adoption.json"
+            for payload in ([], {"schema_version": 1, "skill_version": "0.10.0", "changes": []},
+                            {"schema_version": 1, "skill_version": "0.9.10", "changes": []}):
+                descriptor.write_text(json.dumps(payload))
+                with self.assertRaises(updater.UpdateConflict) as refusal:
+                    updater.validate_candidate(candidate)
+                self.assertEqual(refusal.exception.code, "invalid_adoption_descriptor")
+
+    def test_claude_marketplace_plain_output_is_not_parsed_as_json(self):
+        completed = subprocess.CompletedProcess([], 0, "Marketplace refreshed\n", "")
+        with mock.patch.object(updater.subprocess, "run", return_value=completed):
+            result = updater._run_platform("claude", "plugin", "marketplace", "update", "xeonvs-engineering")
+        self.assertEqual(result, {})
+
+    def test_default_selects_annotated_stable_not_main_lightweight_or_prerelease(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = init_upstream(root, "0.4.1")
+            git(source, "tag", "-a", "v0.4.1", "-m", "release")
+            install = root / "installed"
+            shutil.copytree(source / SOURCE_PATH, install)
+            commit_version(source, "0.5.0")
+            git(source, "tag", "v0.5.0")
+            commit_version(source, "0.6.0-rc.1")
+            git(source, "tag", "-a", "v0.6.0-rc.1", "-m", "preview")
+            commit_version(source, "0.6.0")
+            stable = updater.update_installation(install, str(source))
+            development = updater.update_installation(install, str(source), ref="main")
+            self.assertTrue(stable["success"], stable)
+            self.assertEqual(stable["source_ref"], "v0.4.1")
+            self.assertEqual(stable["candidate_version"], "0.4.1")
+            self.assertEqual(development["candidate_version"], "0.6.0")
+
+    def test_tag_version_mismatch_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = init_upstream(root)
+            git(source, "tag", "-a", "v0.5.0", "-m", "wrong version")
+            install = root / "installed"
+            shutil.copytree(source / SOURCE_PATH, install)
+            result = updater.update_installation(install, str(source))
+            self.assertEqual(result["update_status"], "release_version_mismatch")
+            self.assertFalse(result["success"])
+
+    def test_transport_failure_keeps_currentness_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install = write_candidate(root, "0.5.0")
+            result = updater.update_installation(install, str(root / "absent"))
+            self.assertEqual(result["update_status"], "upstream_unavailable")
+            self.assertEqual(result["currentness"], "unknown")
+            self.assertIsNone(result["candidate_version"])
+
+    def _plugin_fixture(self, root: Path, catalog_release: str = "1.0.0"):
+        source = init_upstream(root)
+        install_bundle = root / "cache" / "old"
+        install = install_bundle / "skills" / "engineering-workflow"
+        shutil.copytree(source / SOURCE_PATH, install)
+        (install_bundle / ".codex-plugin").mkdir()
+        (install_bundle / ".codex-plugin" / "plugin.json").write_text("{}")
+        commit_version(source, "0.5.0")
+        git(source, "tag", "-a", "v0.5.0", "-m", "release")
+        catalog, bundle = init_catalog(root, source, catalog_release=catalog_release)
+        clone = updater._clone_candidate
+
+        def local_clone(repo, path, ref, temporary):
+            return clone(str(catalog if repo == updater.CANONICAL_MARKETPLACE else source), path, ref, temporary)
+        return source, catalog, bundle, install, local_clone
+
+    def test_catalog_lag_still_exposes_verified_deliverable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root, "1.0.11")
+            commit_version(source, "0.6.0")
+            git(source, "tag", "-a", "v0.6.0", "-m", "new source release")
+            before = updater._tree_entries(install)
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone):
+                result = updater.update_installation(install)
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["catalog_ref"], "v1.0.11")
+            self.assertEqual(result["source_latest_version"], "0.6.0")
+            self.assertEqual(result["candidate_version"], "0.5.0")
+            self.assertTrue(result["delivery_pending"])
+            self.assertEqual(result["recommended_action"], "marketplace_update")
+            self.assertEqual(before, updater._tree_entries(install))
+
+    def test_native_update_uses_cli_and_reads_back_new_active_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root, "1.0.10")
+            new_bundle = root / "cache" / "new"
+            shutil.copytree(bundle, new_bundle)
+            source_commit = git(source, "rev-parse", "HEAD")
+            catalog_commit = git(catalog, "rev-parse", "HEAD")
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+            def platform_call(platform, *args):
+                self.assertEqual(platform, "codex")
+                if args[:2] == ("plugin", "list"):
+                    return {"installed": [dict(inventory)]}
+                if args[:2] == ("plugin", "add"):
+                    inventory.update({"version": "0.5.0", "installedPath": str(new_bundle)})
+                    return {"installedPath": str(new_bundle)}
+                return {}
+            before = updater._tree_entries(install)
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ), mock.patch.object(updater, "_replace_copied_installation", side_effect=AssertionError("cache write")):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=source_commit,
+                    expected_catalog_commit=catalog_commit, platform="codex",
+                )
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["catalog_ref"], "v1.0.10")
+            self.assertTrue(result["native_readback_verified"])
+            self.assertEqual(result["installed_version"], "0.5.0")
+            self.assertEqual(before, updater._tree_entries(install))
+
+    def test_codex_missing_inventory_path_uses_custom_home_for_check_and_native_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = init_upstream(root)
+            codex_home = root / "custom-codex-home"
+            install_bundle = (
+                codex_home / "plugins" / "cache" / "xeonvs-engineering" / "engineering-workflow" / "0.4.1"
+            )
+            install = install_bundle / "skills" / "engineering-workflow"
+            shutil.copytree(source / SOURCE_PATH, install)
+            manifest = install_bundle / ".codex-plugin" / "plugin.json"
+            manifest.parent.mkdir()
+            manifest.write_text("{}\n")
+            commit_version(source, "0.5.0")
+            git(source, "tag", "-a", "v0.5.0", "-m", "release")
+            catalog, bundle = init_catalog(root, source, catalog_release="1.0.10")
+            new_bundle = install_bundle.parent / "0.5.0"
+            shutil.copytree(bundle, new_bundle)
+            clone = updater._clone_candidate
+
+            def local_clone(repo, path, ref, temporary):
+                return clone(str(catalog if repo == updater.CANONICAL_MARKETPLACE else source), path, ref, temporary)
+
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+
+            def platform_call(platform, *args):
+                if args[:2] == ("plugin", "list"):
+                    return {"installed": [dict(inventory)]}
+                if args[:2] == ("plugin", "add"):
+                    inventory["version"] = "0.5.0"
+                    return {"installedPath": str(new_bundle)}
+                return {}
+
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}), mock.patch.object(
+                updater, "_clone_candidate", side_effect=local_clone
+            ), mock.patch.object(updater, "_run_platform", side_effect=platform_call):
+                checked = updater.update_installation(install)
+                result = updater.update_installation(
+                    install,
+                    apply=True,
+                    expected_commit=checked["resolved_commit"],
+                    expected_catalog_commit=checked["catalog_commit"],
+                    platform="codex",
+                )
+            self.assertTrue(checked["success"], checked)
+            self.assertTrue(result["success"], result)
+            self.assertEqual(result["installed_version"], "0.5.0")
+            self.assertEqual(result["path_resolution_evidence"]["before"]["source"], "codex_cache_layout")
+            self.assertEqual(result["path_resolution_evidence"]["after"]["source"], "codex_cache_layout")
+            self.assertEqual(result["active_installation_path"], str(new_bundle / "skills" / "engineering-workflow"))
+
+    def test_delivery_provenance_rejects_catalog_release_as_format_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = init_upstream(root)
+            commit_version(source, "0.5.0")
+            catalog, _ = init_catalog(root, source, catalog_release="1.0.10")
+            provenance = json.loads((catalog / "PROVENANCE.json").read_text())
+            provenance["catalog_version"] = "1.0.10"
+            with self.assertRaises(updater.UpdateConflict) as refusal:
+                updater._delivery_provenance(json.dumps(provenance))
+            self.assertEqual(refusal.exception.code, "invalid_delivery_provenance")
+
+    def test_native_mismatch_fails_instead_of_reporting_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            new_bundle = root / "cache" / "new"
+            shutil.copytree(bundle, new_bundle)
+            (new_bundle / "skills" / "engineering-workflow" / "SKILL.md").write_text("invalid active bytes\n")
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+            def platform_call(platform, *args):
+                if args[:2] == ("plugin", "list"):
+                    return {"installed": [dict(inventory)]}
+                if args[:2] == ("plugin", "add"):
+                    inventory.update({"version": "0.5.0", "installedPath": str(new_bundle)})
+                    return {"installedPath": str(new_bundle)}
+                return {}
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="codex",
+                )
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "native_post_update_mismatch")
+            self.assertEqual(result["currentness"], "unknown")
+            self.assertEqual(result["installed_version"], "0.5.0")
+            self.assertNotEqual(result["active_installation_path"], str(install.absolute()))
+            self.assertEqual(result["next_agent_action"], "recheck_native_installation_and_recover")
+
+    def test_native_write_failure_recaptures_observed_active_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            new_bundle = root / "cache" / "new"
+            shutil.copytree(bundle, new_bundle)
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+
+            def platform_call(platform, *args):
+                if args[:2] == ("plugin", "list"):
+                    return {"installed": [dict(inventory)]}
+                if args[:3] == ("plugin", "marketplace", "upgrade"):
+                    inventory.update({"version": "0.5.0", "installedPath": str(new_bundle)})
+                    raise updater.UpdateConflict("native_update_failed", "Native plugin command failed")
+                return {}
+
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="codex",
+                )
+            self.assertEqual(result["update_status"], "native_update_failed")
+            self.assertTrue(result["native_mutation_attempted"])
+            self.assertFalse(result["native_readback_verified"])
+            self.assertEqual(result["currentness"], "unknown")
+            self.assertEqual(result["installed_version"], "0.5.0")
+            self.assertEqual(
+                result["active_installation_path"], str(new_bundle / "skills" / "engineering-workflow")
+            )
+            self.assertEqual(result["recommended_action"], "recheck_native_installation")
+            self.assertEqual(result["next_agent_action"], "recheck_native_installation_and_recover")
+
+    def test_native_readback_failure_clears_stale_active_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            new_bundle = root / "cache" / "new"
+            shutil.copytree(bundle, new_bundle)
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+            inventory_reads = 0
+
+            def platform_call(platform, *args):
+                nonlocal inventory_reads
+                if args[:2] == ("plugin", "list"):
+                    inventory_reads += 1
+                    if inventory_reads >= 3:
+                        raise updater.UpdateConflict("native_result_invalid", "Native inventory unavailable")
+                    return {"installed": [dict(inventory)]}
+                if args[:2] == ("plugin", "add"):
+                    inventory.update({"version": "0.5.0", "installedPath": str(new_bundle)})
+                    return {"installedPath": str(new_bundle)}
+                return {}
+
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="codex",
+                )
+            self.assertEqual(result["update_status"], "native_result_invalid")
+            self.assertTrue(result["native_mutation_attempted"])
+            self.assertFalse(result["native_readback_verified"])
+            self.assertEqual(result["currentness"], "unknown")
+            self.assertIsNone(result["installed_version"])
+            self.assertIsNone(result["active_installation_path"])
+            self.assertIsNone(result["observed_native_path"])
+            self.assertEqual(result["next_agent_action"], "recheck_native_installation_and_recover")
+
+    def test_dual_manifest_bundle_refuses_other_platform_active_path_before_native_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            claude_manifest = install.parent.parent / ".claude-plugin" / "plugin.json"
+            claude_manifest.parent.mkdir()
+            claude_manifest.write_text("{}\n")
+            other_bundle = root / "cache" / "claude-active"
+            shutil.copytree(install.parent.parent, other_bundle)
+            inventory = {
+                "id": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installPath": str(other_bundle), "scope": "local",
+            }
+            commands = []
+
+            def platform_call(platform, *args):
+                commands.append(args)
+                if args[:2] == ("plugin", "list"):
+                    return [dict(inventory)]
+                raise AssertionError(f"unexpected native mutation: {args}")
+
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="claude",
+                )
+            self.assertEqual(result["update_status"], "native_active_identity_mismatch")
+            self.assertEqual(commands, [("plugin", "list", "--json")])
+
+    def test_native_active_python_cache_refuses_before_native_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            cache = install / "scripts" / "__pycache__"
+            cache.mkdir()
+            (cache / "tool.cpython-313.pyc").write_bytes(b"runtime bytecode")
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+            commands = []
+
+            def platform_call(platform, *args):
+                commands.append(args)
+                return {"installed": [dict(inventory)]}
+
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="codex",
+                )
+            self.assertEqual(result["update_status"], "native_active_executable_cache")
+            self.assertEqual(result["next_agent_action"], "reinstall_native_plugin_without_direct_cache_edits")
+            self.assertEqual(
+                commands,
+                [("plugin", "list", "--marketplace", "xeonvs-engineering", "--json")],
+            )
+
+    def test_native_apply_requires_reviewed_delivery_pins_before_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform"
+            ) as native:
+                result = updater.update_installation(install, apply=True, platform="codex")
+            self.assertEqual(result["update_status"], "expected_delivery_mismatch")
+            native.assert_not_called()
+
+    def test_claude_native_update_checks_canonical_marketplace_and_readback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            metadata = install.parent.parent / ".claude-plugin" / "plugin.json"
+            metadata.parent.mkdir()
+            metadata.write_text("{}")
+            new_bundle = root / "cache" / "new"
+            shutil.copytree(bundle, new_bundle)
+            inventory = {
+                "id": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installPath": str(install.parent.parent), "scope": "project",
+            }
+            commands = []
+            def platform_call(platform, *args):
+                commands.append(args)
+                if args[:3] == ("plugin", "marketplace", "list"):
+                    return [{"name": "xeonvs-engineering", "source": "github",
+                             "repo": "xeonvs/xeonvs-engineering", "installLocation": str(catalog)}]
+                if args[:2] == ("plugin", "list"):
+                    return [dict(inventory)]
+                if args[:2] == ("plugin", "update"):
+                    inventory.update({"version": "0.5.0", "installPath": str(new_bundle)})
+                return {}
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="claude",
+                )
+            self.assertTrue(result["success"], result)
+            self.assertTrue(result["native_readback_verified"])
+            self.assertIn(("plugin", "marketplace", "update", "xeonvs-engineering"), commands)
+            self.assertIn(
+                (
+                    "plugin", "update", "engineering-workflow@xeonvs-engineering",
+                    "--scope", "project", "--json",
+                ),
+                commands,
+            )
+
+    def test_native_changed_marketplace_snapshot_refuses_plugin_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, catalog, bundle, install, clone = self._plugin_fixture(root)
+            provenance_path = catalog / "PROVENANCE.json"
+            provenance = json.loads(provenance_path.read_text())
+            provenance["bundles"][0]["source_commit"] = "0" * 40
+            provenance_path.write_text(json.dumps(provenance))
+            inventory = {
+                "pluginId": "engineering-workflow@xeonvs-engineering", "enabled": True, "version": "0.4.1",
+                "installedPath": str(install.parent.parent),
+                "source": {"source": "local", "path": str(bundle)},
+                "marketplaceSource": {"sourceType": "git", "source": updater.CANONICAL_MARKETPLACE},
+            }
+            commands = []
+            def platform_call(platform, *args):
+                commands.append(args)
+                return {"installed": [dict(inventory)]} if args[:2] == ("plugin", "list") else {}
+            with mock.patch.object(updater, "_clone_candidate", side_effect=clone), mock.patch.object(
+                updater, "_run_platform", side_effect=platform_call
+            ):
+                result = updater.update_installation(
+                    install, apply=True, expected_commit=git(source, "rev-parse", "HEAD"),
+                    expected_catalog_commit=git(catalog, "rev-parse", "HEAD"), platform="codex",
+                )
+            self.assertFalse(result["success"])
+            self.assertEqual(result["update_status"], "native_delivery_mismatch")
+            self.assertFalse(any(args[:2] == ("plugin", "add") for args in commands))
 
 
 if __name__ == "__main__":
