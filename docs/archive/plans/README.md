@@ -21,4 +21,5 @@ This file indexes future-useful closed plans. Active execution state remains in 
 - [2026-09-23-gpt-6-model-profiles-and-marketplace-release.md](2026-09-23-gpt-6-model-profiles-and-marketplace-release.md)
 - [2026-09-23-privacy-preflight-exact-review-v2-and-release.md](2026-09-23-privacy-preflight-exact-review-v2-and-release.md)
 - [2026-09-25-repair-custom-archive-upgrade-and-add-claude-subagent-profiles.md](2026-09-25-repair-custom-archive-upgrade-and-add-claude-subagent-profiles.md)
+- [2026-10-12-documentation-navigation-and-release-adoption-0-10-0.md](2026-10-12-documentation-navigation-and-release-adoption-0-10-0.md)
 <!-- engineering-workflow:index:end -->
