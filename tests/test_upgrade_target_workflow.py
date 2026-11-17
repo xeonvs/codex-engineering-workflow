@@ -17,6 +17,33 @@ common = load_script_module("common")
 migrator = load_script_module("upgrade_target_workflow")
 lifecycle = load_script_module("plan_lifecycle")
 LEGACY_INSTRUCTIONS = Path(__file__).resolve().parent / "fixtures/legacy_instructions"
+AVAILABLE_CODEX_MODELS = ("gpt-6-luna", "gpt-6.2-sol")
+PRIOR_CODEX_INSTRUCTIONS = {
+    "utility": (
+        "Use only the bounded self-contained packet and accessible inputs supplied by the root. "
+        "Do not expand scope, write shared state, spawn child agents, or retry more than once. "
+        "Return compact status, findings, checks, blockers, accessible evidence paths, needs_escalation, "
+        "and the stopping condition; report an inaccessible required input instead of guessing."
+    ),
+    "reviewer": (
+        "Review only the bounded self-contained change packet and accessible evidence supplied by the root "
+        "without modifying shared state. Return compact status, findings with severity and confidence, "
+        "evidence paths, checks, blockers, assumptions, and a stopping or escalation condition; "
+        "report missing required context rather than inferring it."
+    ),
+}
+
+
+def released_codex_agent(role: str) -> str:
+    text = (migrator.AGENT_TEMPLATE_ROOT / f"{role}.toml.tmpl").read_text(encoding="utf-8")
+    if role in PRIOR_CODEX_INSTRUCTIONS:
+        text = "\n".join(
+            f'developer_instructions = "{PRIOR_CODEX_INSTRUCTIONS[role]}"'
+            if line.startswith("developer_instructions = ")
+            else line
+            for line in text.split("\n")
+        )
+    return text.replace('model = "gpt-6.2-sol"', 'model = "gpt-6-sol"')
 
 
 def make_target(root: Path) -> None:
@@ -36,14 +63,12 @@ def snapshot(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
-def prior_router(current: str) -> str:
-    """Keep historical fingerprint fixtures independent of newly added router sections."""
-    start = current.index("\nAt a new session or material context recovery,")
-    end = current.index("\n## Task Routes", start)
-    current = current[:start] + current[end:]
-    start = current.index('<!-- ew:route id="documentation"')
-    end = current.index('<!-- ew:route id="execution-context"', start)
-    return current[:start] + current[end:]
+def prior_router(replacements: dict[str, str]) -> str:
+    """Render the released router independently of current presentation changes."""
+    text = (LEGACY_INSTRUCTIONS / "AGENTS_0_9_6.md.tmpl").read_text(encoding="utf-8")
+    for key, value in replacements.items():
+        text = text.replace("{{ " + key + " }}", value)
+    return text
 
 
 def make_custom_archive_target(root: Path, *, unmanaged_leaf: bool = False) -> None:
@@ -224,7 +249,9 @@ class UpgradeTargetWorkflowTests(unittest.TestCase):
             with self.subTest(mode=mode, include_config=include_config), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 make_target(root)
-                first = migrator.apply_migration(root, "0.9.6", include_agent_config=include_config)
+                first = migrator.apply_migration(
+                    root, "0.9.6", include_agent_config=include_config, available_codex_models=AVAILABLE_CODEX_MODELS
+                )
                 self.assertTrue(first["success"], first)
                 before = snapshot(root)
 
@@ -991,7 +1018,9 @@ Status: active
             original = 'name = "local-reviewer"\nmodel = "custom-supported-model"\nmodel_reasoning_effort = "medium"\n'
             reviewer.write_text(original, encoding="utf-8")
 
-            result = migrator.apply_migration(root, "0.9.6", include_agent_config=True)
+            result = migrator.apply_migration(
+                root, "0.9.6", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
 
             self.assertTrue(result["success"], result)
             self.assertEqual(reviewer.read_text(encoding="utf-8"), original)
@@ -1000,12 +1029,14 @@ Status: active
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
-            initial = migrator.apply_migration(root, "0.9.7", include_agent_config=True)
+            initial = migrator.apply_migration(
+                root, "0.9.7", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
             self.assertTrue(initial["success"], initial)
             agents = root / ".codex/agents"
             for name in ("utility", "explorer", "reviewer"):
                 path = agents / f"{name}.toml"
-                prior = path.read_text(encoding="utf-8")
+                prior = released_codex_agent(name)
                 if name == "utility":
                     prior = prior.replace('model = "gpt-6-luna"', 'model = "gpt-5.6-terra"')
                 elif name == "explorer":
@@ -1034,7 +1065,7 @@ Status: active
             }
             self.assertEqual(proposed, {".codex/agents/utility.toml", ".codex/agents/reviewer.toml"})
 
-            result = migrator.execute_prompt_upgrade(root, "0.9.8")
+            result = migrator.execute_prompt_upgrade(root, "0.9.8", available_codex_models=AVAILABLE_CODEX_MODELS)
             self.assertTrue(result["success"], result)
             self.assertTrue(result["include_agent_config"])
             self.assertEqual(explorer.read_text(encoding="utf-8"), custom)
@@ -1048,13 +1079,49 @@ Status: active
             make_target(root)
             utility = root / ".codex/agents/utility.toml"
             utility.parent.mkdir(parents=True)
-            current = (migrator.AGENT_TEMPLATE_ROOT / "utility.toml.tmpl").read_text(encoding="utf-8")
+            current = released_codex_agent("utility")
             prior = current.replace('model = "gpt-6-luna"', 'model = "gpt-5.6-terra"')
             utility.write_text(prior, encoding="utf-8")
             result = migrator.execute_prompt_upgrade(root, "0.9.8")
             self.assertTrue(result["success"], result)
             self.assertFalse(result["include_agent_config"])
             self.assertEqual(utility.read_text(encoding="utf-8"), prior)
+
+    def test_gpt62_upgrade_verifies_models_and_preserves_custom_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_target(root)
+            initial = migrator.apply_migration(
+                root, "0.10.0", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
+            self.assertTrue(initial["success"], initial)
+            agents = root / ".codex" / "agents"
+            utility = agents / "utility.toml"
+            explorer = agents / "explorer.toml"
+            reviewer = agents / "reviewer.toml"
+            # Different line endings are a byte change, even with the same TOML values.
+            custom_reviewer = released_codex_agent("reviewer").replace("\n", "\r\n").encode()
+            reviewer.write_bytes(custom_reviewer)
+            self.assertTrue(migrator._is_pristine_prior_agent("explorer", released_codex_agent("explorer")))
+            explorer.write_text(released_codex_agent("explorer"), encoding="utf-8")
+            plan = migrator.build_migration_report(root, "0.11.0")
+            self.assertEqual(plan["required_codex_models"], ["gpt-6.2-sol"])
+            before = snapshot(root)
+
+            blocked = migrator.execute_prompt_upgrade(root, "0.11.0", available_codex_models=("gpt-6.1-sol",))
+            self.assertEqual(blocked["update_status"], "codex_model_availability_required")
+            self.assertEqual(blocked["unverified_codex_models"], ["gpt-6.2-sol"])
+            self.assertEqual(blocked["mutation_log"], [])
+            self.assertEqual(snapshot(root), before)
+
+            upgraded = migrator.execute_prompt_upgrade(root, "0.11.0", available_codex_models=("gpt-6.2-sol",))
+            self.assertTrue(upgraded["success"], upgraded)
+            self.assertEqual(tomllib.loads(explorer.read_text())["model"], "gpt-6.2-sol")
+            self.assertEqual(utility.read_bytes(), before[".codex/agents/utility.toml"])
+            self.assertEqual(reviewer.read_bytes(), custom_reviewer)
+            rerun = migrator.execute_prompt_upgrade(root, "0.11.0")
+            self.assertEqual(rerun["update_status"], "already_current")
+            self.assertEqual(rerun["mutation_log"], [])
 
     def test_invalid_codex_config_blocks_only_requested_configuration_work(self):
         for include_config in (False, True):
@@ -1182,7 +1249,7 @@ Status: active
                     "subsystem_hint": "src/" if source else ".",
                 }
                 expected_agents = migrator._template("AGENTS.md.tmpl", replacements)
-                prior_agents = prior_router(expected_agents)
+                prior_agents = prior_router(replacements)
                 start = prior_agents.index('<!-- ew:route id="execution-context"')
                 end = prior_agents.index('<!-- ew:route id="planning"')
                 agents = prior_agents[:start] + old_route + prior_agents[end:]
@@ -1289,13 +1356,10 @@ Status: active
                 if source:
                     (root / "src").mkdir()
                 agents = prior_router(
-                    migrator._template(
-                        "AGENTS.md.tmpl",
-                        {
-                            "entrypoint_hint": "README.md" if readme else ".",
-                            "subsystem_hint": "src/" if source else ".",
-                        },
-                    )
+                    {
+                        "entrypoint_hint": "README.md" if readme else ".",
+                        "subsystem_hint": "src/" if source else ".",
+                    }
                 ).replace(new_route, old_route)
                 principles = migrator._template("project_principles.md.tmpl", {}).replace(
                     new_principles,
@@ -1326,7 +1390,9 @@ Status: active
             config.parent.mkdir(parents=True)
             original = 'custom = "keep"\n\n[agents]\nmax_threads = 4\n\n[profiles.custom]\nmode = "custom"\n'
             config.write_text(original, encoding="utf-8")
-            result = migrator.apply_migration(root, "0.5.0", include_agent_config=True)
+            result = migrator.apply_migration(
+                root, "0.5.0", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
             self.assertTrue(result["success"], result)
             parsed = tomllib.loads(config.read_text(encoding="utf-8"))
             self.assertEqual(parsed["custom"], "keep")
@@ -1337,7 +1403,7 @@ Status: active
             for name in ("utility", "explorer", "reviewer"):
                 self.assertTrue((root / ".codex" / "agents" / f"{name}.toml").exists())
             reviewer = tomllib.loads((root / ".codex/agents/reviewer.toml").read_text(encoding="utf-8"))
-            self.assertEqual(reviewer["model"], "gpt-" + "6-sol")
+            self.assertEqual(reviewer["model"], "gpt-" + "6.2-sol")
             self.assertEqual(reviewer["model_reasoning_effort"], "medium")
 
     def test_agents_header_comment_is_preserved_during_merge(self):
@@ -1355,7 +1421,9 @@ Status: active
             config.parent.mkdir(parents=True)
             original = "agents = { max_threads = 3 }\n"
             config.write_text(original, encoding="utf-8")
-            result = migrator.apply_migration(root, "0.5.0", include_agent_config=True)
+            result = migrator.apply_migration(
+                root, "0.5.0", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
             self.assertFalse(result["success"])
             self.assertEqual(result["update_status"], "question_required")
             self.assertEqual(config.read_text(encoding="utf-8"), original)
@@ -1368,7 +1436,9 @@ Status: active
             config.parent.mkdir(parents=True)
             original = "[agents]\nmax_depth = 2\n"
             config.write_text(original, encoding="utf-8")
-            result = migrator.apply_migration(root, "0.5.0", include_agent_config=True)
+            result = migrator.apply_migration(
+                root, "0.5.0", include_agent_config=True, available_codex_models=AVAILABLE_CODEX_MODELS
+            )
             self.assertFalse(result["success"])
             self.assertEqual(result["update_status"], "question_required")
             self.assertEqual(config.read_text(encoding="utf-8"), original)

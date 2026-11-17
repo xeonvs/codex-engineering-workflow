@@ -13,7 +13,7 @@ from test_support import load_script_module
 
 validate_skill_repo = load_script_module("validate_skill_repo")
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CURRENT_VERSION = "0.10.0"
+CURRENT_VERSION = "0.11.0"
 
 
 class SkillRepoValidationTests(unittest.TestCase):
@@ -58,7 +58,7 @@ class SkillRepoValidationTests(unittest.TestCase):
             self._copy_repo_subset(root)
             path = root / "skill/engineering-workflow/assets/release_adoption.json"
             descriptor = json.loads(path.read_text())
-            descriptor["skill_version"] = "0.11.0"
+            descriptor["skill_version"] = "0.12.0"
             path.write_text(json.dumps(descriptor))
             result = validate_skill_repo.validate_skill_repo(root)
             self.assertFalse(result["success"])
@@ -259,7 +259,7 @@ class SkillRepoValidationTests(unittest.TestCase):
             reviewer = agents / "reviewer.toml.tmpl"
             original = reviewer.read_text(encoding="utf-8")
             variants = (
-                original.replace("gpt-" + "6-sol", "gpt-" + "5.6-terra"),
+                original.replace("gpt-" + "6.2-sol", "gpt-" + "5.6-terra"),
                 original.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "none"'),
                 original.replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "minimal"'),
             )
@@ -404,8 +404,8 @@ class SkillRepoValidationTests(unittest.TestCase):
 
     def test_ci_actions_use_node24_majors(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn("actions/checkout@v6", workflow)
-        self.assertIn("actions/setup-python@v6", workflow)
+        self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", workflow)
+        self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", workflow)
         self.assertNotIn("actions/checkout@v4", workflow)
         self.assertNotIn("actions/setup-python@v5", workflow)
 

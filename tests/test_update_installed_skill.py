@@ -45,6 +45,10 @@ def write_candidate(repo: Path, version: str, name: str = "engineering-workflow"
         local_descriptor = Path(updater.__file__).resolve().parents[1] / "assets" / "release_adoption.json"
         descriptor = json.loads(local_descriptor.read_text())
         descriptor["skill_version"] = version
+        descriptor["changes"] = [
+            change for change in descriptor["changes"]
+            if updater._semver_key(change["introduced_in"]) <= updater._semver_key(version)
+        ]
         (skill / "assets" / "release_adoption.json").write_text(json.dumps(descriptor))
         (skill / "references" / "documentation_navigation.md").write_text("Fixture navigation contract\n")
         for name in ("documentation_navigation", "documentation_restructure", "release_adoption", "workflow_updates"):
