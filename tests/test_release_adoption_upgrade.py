@@ -17,13 +17,14 @@ class ReleaseAdoptionUpgradeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             make_target(root)
-            result = migrator.execute_prompt_upgrade(root, "0.10.0")
+            active_release = adoption.load_descriptor()["skill_version"]
+            result = migrator.execute_prompt_upgrade(root, active_release)
             self.assertTrue(result["success"], result)
             state = (root / migrator.STATE_MANIFEST_PATH).read_text()
             for change in adoption.load_descriptor()["changes"]:
                 self.assertIn(change["id"], state)
             before = snapshot(root)
-            current = migrator.execute_prompt_upgrade(root, "0.10.0")
+            current = migrator.execute_prompt_upgrade(root, active_release)
             self.assertEqual(current["update_status"], "already_current", current)
             self.assertEqual(snapshot(root), before)
 

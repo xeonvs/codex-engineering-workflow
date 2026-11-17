@@ -117,9 +117,9 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(utility["model_reasoning_effort"], "low")
         self.assertEqual(utility["sandbox_mode"], "read-only")
         self.assertEqual(explorer["sandbox_mode"], "read-only")
-        self.assertEqual(explorer["model"], "gpt-" + "6-sol")
+        self.assertEqual(explorer["model"], "gpt-" + "6.2-sol")
         self.assertEqual(explorer["model_reasoning_effort"], "medium")
-        self.assertEqual(reviewer["model"], "gpt-" + "6-sol")
+        self.assertEqual(reviewer["model"], "gpt-" + "6.2-sol")
         self.assertEqual(reviewer["model_reasoning_effort"], "medium")
         self.assertEqual(reviewer["sandbox_mode"], "read-only")
         for profile in (utility, explorer, reviewer):

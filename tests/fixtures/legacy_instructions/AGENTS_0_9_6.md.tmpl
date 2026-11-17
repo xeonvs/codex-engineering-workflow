@@ -1,0 +1,46 @@
+# Agent Instructions
+
+instruction_contract_version: 3
+
+Use this file as a short route map, not as a project manual. Read the matched owners before changing the routed path and run the named guards before closure. All matching routes apply, including the general repository-change route for specialized changes, but one current owner or unchanged-state guard is not repeated merely because several routes reference it.
+
+## Repo Map
+
+- `{{ entrypoint_hint }}`
+- `{{ subsystem_hint }}`
+- `tests/` — regression and contract checks
+
+## Workflow Sources Of Truth
+
+- `PLANS.md` — full active plans and durable recent outcomes; follow plan schema version 2 from the installed `engineering-workflow` planning reference.
+- `docs/codex/TASKS_BACKLOG.md` — inactive future work.
+- `docs/engineering/project_principles.md` — stable cross-cutting rules and ownership boundaries.
+- `docs/codex/AGENT_EXECUTION_PITFALLS.md` — non-normative incident classes and evidence links.
+- `docs/codex/ENGINEERING_WORKFLOW_STATE.yaml` — workflow ownership and applied-version record.
+
+## Task Routes
+
+<!-- ew:route id="execution-context" triggers="host uncertainty|capability uncertainty" owners="skill://engineering-workflow/references/platform_compatibility.md" guards="manual_review:resolve uncertain host capabilities from current session evidence" -->
+| `execution-context` | host or capability uncertainty | installed platform reference | resolve uncertainty; reuse established session facts |
+
+<!-- ew:route id="scope-decision" triggers="material clarification|additional authorization" owners="skill://engineering-workflow/references/question_matrix.md" guards="manual_review:check existing authorization and available evidence before asking" -->
+| `scope-decision` | material clarification or additional authorization | installed question policy | ask only for an unresolved material choice or permission |
+
+<!-- ew:route id="task-handoff" triggers="delegation|context recovery|execution handoff|large transient evidence" owners="skill://engineering-workflow/references/agent_orchestration.md|skill://engineering-workflow/references/planning_and_backlog.md" guards="manual_review:verify self-contained scope accessible evidence durable state and root acceptance" -->
+| `task-handoff` | delegation, context recovery, execution handoff, or large transient evidence | installed orchestration and planning references | self-contained scope, durable state, accessible evidence, and root acceptance |
+
+<!-- ew:route id="planning" triggers="PLANS.md|docs/codex/TASKS_BACKLOG.md|docs/archive/**|workflow-state plan archive|plan closure" owners="skill://engineering-workflow/references/planning_and_backlog.md" guards="lint:plan-lifecycle" -->
+| `planning` | plan, backlog, closure, or default/custom workflow-state archive | installed planning reference | `lint:plan-lifecycle` |
+
+<!-- ew:route id="workflow-instructions" triggers="AGENTS.md|docs/engineering/**|docs/codex/AGENT_EXECUTION_PITFALLS.md" owners="skill://engineering-workflow/references/instruction_lifecycle.md|docs/engineering/project_principles.md" guards="lint:instruction-contract" -->
+| `workflow-instructions` | instruction owner, route, or incident change | instruction lifecycle and project principles | `lint:instruction-contract` |
+
+<!-- ew:route id="repository-change" triggers="**" owners="docs/engineering/project_principles.md" guards="manual_review:run repository gates mapped by the owner" -->
+| `repository-change` | every repository-changing task, alongside specialized routes | project principles and its domain-owner links | repository-specific gates |
+
+<!-- ew:route id="long-running-execution" triggers="long-running commands|builds|tests|local processes|polling|terminal sessions" owners="docs/engineering/project_principles.md" guards="manual_review:verify completion evidence deadline bounded output and task-owned cleanup" -->
+| `long-running-execution` | long-running local command, waiter, polling, or process cleanup | project principles and installed orchestration contract | completion-evidence review |
+
+## Route Maintenance
+
+Add a route when a domain owner cannot otherwise be discovered from the changed path. Keep normative requirements in the owner and keep incident history in the catalog.

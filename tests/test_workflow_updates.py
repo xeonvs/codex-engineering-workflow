@@ -22,7 +22,7 @@ class ReleaseAdoptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pending = adoption.assess_target_adoption(root, "0.10.0")["pending_change_ids"]
-            report = adoption.assess_target_adoption(root, "0.11.0", pending)
+            report = adoption.assess_target_adoption(root, "0.12.0", pending)
             self.assertFalse(report["descriptor_covers_target"])
             self.assertEqual(report["adoption_status"], "pending")
 

@@ -24,7 +24,9 @@ class ClaudeAgentUpgradeTests(unittest.TestCase):
             settings.parent.mkdir(parents=True)
             settings.write_text('{"model":"team-owned"}\n', encoding="utf-8")
 
-            result = migrator.apply_migration(root, "0.9.10", include_agent_config=True)
+            result = migrator.apply_migration(
+                root, "0.9.10", include_agent_config=True, available_codex_models=("gpt-6-luna", "gpt-6.2-sol")
+            )
 
             self.assertTrue(result["success"], result)
             self.assertFalse(result["include_claude_agent_config"])
